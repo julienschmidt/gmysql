@@ -260,14 +260,15 @@ func parseDSNParams(cfg *config, params string) (err error) {
 				return
 			}
 
-		// I/O Timeouts
-		case "read_timeout":
+		// I/O Read Timeout
+		case "readTimeout":
 			cfg.readTimeout, err = time.ParseDuration(value)
 			if err != nil {
 				return
 			}
 
-		case "write_timeout":
+		// I/O Write Timeout
+		case "writeTimeout":
 			cfg.writeTimeout, err = time.ParseDuration(value)
 			if err != nil {
 				return

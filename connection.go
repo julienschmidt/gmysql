@@ -26,6 +26,7 @@ type mysqlConn struct {
 	cfg              *config
 	maxPacketAllowed int
 	maxWriteSize     int
+	writeTimeout     time.Duration
 	flags            clientFlag
 	status           statusFlag
 	sequence         uint8
@@ -131,7 +132,7 @@ func (mc *mysqlConn) Close() (err error) {
 	}
 
 	mc.cfg = nil
-	mc.buf.rd = nil
+	mc.buf.nc = nil
 
 	return
 }
