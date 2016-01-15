@@ -72,7 +72,7 @@ func (stmt *Stmt) Exec(args ...interface{}) (*Result, error) {
 
 	conn := stmt.conn
 	conn.affectedRows = 0
-	conn.insertId = 0
+	conn.insertID = 0
 
 	// Read Result
 	resLen, err := conn.readResultSetHeaderPacket()
@@ -90,7 +90,7 @@ func (stmt *Stmt) Exec(args ...interface{}) (*Result, error) {
 		if err == nil {
 			return &Result{
 				affectedRows: int64(conn.affectedRows),
-				insertId:     int64(conn.insertId),
+				insertID:     int64(conn.insertID),
 			}, nil
 		}
 	}

@@ -150,7 +150,7 @@ func TestCRUD(t *testing.T) {
 			ct.Fatalf("Expected 1 affected row, got %d", count)
 		}
 
-		id, err := res.LastInsertId()
+		id, err := res.LastInsertID()
 		if err != nil {
 			ct.Fatalf("res.LastInsertId() returned error: %s", err.Error())
 		}

@@ -511,8 +511,8 @@ func (conn *Conn) handleOkPacket(data []byte) error {
 	// Affected rows [Length Coded Binary]
 	conn.affectedRows, _, n = readLengthEncodedInteger(data[1:])
 
-	// Insert id [Length Coded Binary]
-	conn.insertId, _, m = readLengthEncodedInteger(data[1+n:])
+	// Insert ID [Length Coded Binary]
+	conn.insertID, _, m = readLengthEncodedInteger(data[1+n:])
 
 	// server_status [2 bytes]
 	conn.status = statusFlag(data[1+n+m]) | statusFlag(data[1+n+m+1])<<8

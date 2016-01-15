@@ -19,7 +19,7 @@ type Conn struct {
 	buf              buffer
 	netConn          net.Conn
 	affectedRows     uint64
-	insertId         uint64
+	insertID         uint64
 	cfg              *Config
 	maxPacketAllowed int
 	maxWriteSize     int
@@ -346,11 +346,11 @@ func (conn *Conn) Exec(query string, args ...interface{}) (res Result, err error
 		args = nil
 	}
 	conn.affectedRows = 0
-	conn.insertId = 0
+	conn.insertID = 0
 
 	if err = conn.exec(query); err == nil {
 		res.affectedRows = int64(conn.affectedRows)
-		res.insertId = int64(conn.insertId)
+		res.insertID = int64(conn.insertID)
 	}
 	return
 }

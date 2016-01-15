@@ -10,11 +10,11 @@ package gmysql
 
 type Result struct {
 	affectedRows int64
-	insertId     int64
+	insertID     int64
 }
 
-func (res *Result) LastInsertId() (int64, error) {
-	return res.insertId, nil
+func (res *Result) LastInsertID() (int64, error) {
+	return res.insertID, nil
 }
 
 func (res *Result) RowsAffected() (int64, error) {
