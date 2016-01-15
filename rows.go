@@ -138,7 +138,7 @@ func (rows *binaryRows) Scan(dest ...interface{}) (err error) {
 		return
 	}
 	if rows.data == nil {
-		return ErrNoRow
+		return ErrNoRows
 	}
 	if len(dest) != len(rows.columns) {
 		fmt.Errorf("expected %d destination arguments in Scan, not %d", len(rows.columns), len(dest))
@@ -167,7 +167,7 @@ func (rows *textRows) Scan(dest ...interface{}) (err error) {
 		return
 	}
 	if rows.data == nil {
-		return ErrNoRow
+		return ErrNoRows
 	}
 	if len(dest) != len(rows.columns) {
 		fmt.Errorf("expected %d destination arguments in Scan, not %d", len(rows.columns), len(dest))
@@ -191,5 +191,5 @@ func (rows emptyRows) Next() bool {
 }
 
 func (rows emptyRows) Scan(dest ...interface{}) error {
-	return ErrNoRow
+	return ErrNoRows
 }
