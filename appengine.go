@@ -8,7 +8,7 @@
 
 // +build appengine
 
-package mysql
+package gmysql
 
 import (
 	"appengine/cloudsql"

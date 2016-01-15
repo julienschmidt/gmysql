@@ -6,14 +6,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package mysql
+package gmysql
 
 import (
-	"database/sql/driver"
 	"io"
 )
 
-type mysqlField struct {
+type Field struct {
 	tableName string
 	name      string
 	flags     fieldFlag
@@ -21,24 +20,30 @@ type mysqlField struct {
 	decimals  byte
 }
 
-type mysqlRows struct {
-	mc      *mysqlConn
-	columns []mysqlField
+type Rows interface {
+	Columns() []string
+	Close() error
+	Next(dest ...interface{}) error
+}
+
+type iRows struct {
+	conn    *Conn
+	columns []Field
 }
 
 type binaryRows struct {
-	mysqlRows
+	iRows
 }
 
 type textRows struct {
-	mysqlRows
+	iRows
 }
 
 type emptyRows struct{}
 
-func (rows *mysqlRows) Columns() []string {
+func (rows *iRows) Columns() []string {
 	columns := make([]string, len(rows.columns))
-	if rows.mc.cfg.ColumnsWithAlias {
+	if rows.conn.cfg.ColumnsWithAlias {
 		for i := range columns {
 			if tableName := rows.columns[i].tableName; len(tableName) > 0 {
 				columns[i] = tableName + "." + rows.columns[i].name
@@ -54,24 +59,24 @@ func (rows *mysqlRows) Columns() []string {
 	return columns
 }
 
-func (rows *mysqlRows) Close() error {
-	mc := rows.mc
-	if mc == nil {
+func (rows *iRows) Close() error {
+	conn := rows.conn
+	if conn == nil {
 		return nil
 	}
-	if mc.netConn == nil {
+	if conn.netConn == nil {
 		return ErrInvalidConn
 	}
 
 	// Remove unread packets from stream
-	err := mc.readUntilEOF()
-	rows.mc = nil
+	err := conn.readUntilEOF()
+	rows.conn = nil
 	return err
 }
 
-func (rows *binaryRows) Next(dest []driver.Value) error {
-	if mc := rows.mc; mc != nil {
-		if mc.netConn == nil {
+func (rows *binaryRows) Next(dest ...interface{}) error {
+	if conn := rows.conn; conn != nil {
+		if conn.netConn == nil {
 			return ErrInvalidConn
 		}
 
@@ -81,9 +86,9 @@ func (rows *binaryRows) Next(dest []driver.Value) error {
 	return io.EOF
 }
 
-func (rows *textRows) Next(dest []driver.Value) error {
-	if mc := rows.mc; mc != nil {
-		if mc.netConn == nil {
+func (rows *textRows) Next(dest ...interface{}) error {
+	if conn := rows.conn; conn != nil {
+		if conn.netConn == nil {
 			return ErrInvalidConn
 		}
 
@@ -101,6 +106,6 @@ func (rows emptyRows) Close() error {
 	return nil
 }
 
-func (rows emptyRows) Next(dest []driver.Value) error {
+func (rows emptyRows) Next(dest ...interface{}) error {
 	return io.EOF
 }

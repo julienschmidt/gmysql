@@ -6,16 +6,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package mysql
+package gmysql
 
 import (
 	"bytes"
-	"database/sql"
-	"database/sql/driver"
+	"io"
 	"math"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -28,110 +25,87 @@ func (tb *TB) check(err error) {
 	}
 }
 
-func (tb *TB) checkDB(db *sql.DB, err error) *sql.DB {
+func (tb *TB) checkConn(conn *Conn, err error) *Conn {
 	tb.check(err)
-	return db
+	return conn
 }
 
-func (tb *TB) checkRows(rows *sql.Rows, err error) *sql.Rows {
+func (tb *TB) checkRows(rows Rows, err error) Rows {
 	tb.check(err)
 	return rows
 }
 
-func (tb *TB) checkStmt(stmt *sql.Stmt, err error) *sql.Stmt {
+func (tb *TB) checkStmt(stmt *Stmt, err error) *Stmt {
 	tb.check(err)
 	return stmt
 }
 
-func initDB(b *testing.B, queries ...string) *sql.DB {
+func initConn(b *testing.B, queries ...string) *Conn {
 	tb := (*TB)(b)
-	db := tb.checkDB(sql.Open("mysql", dsn))
+	conn := tb.checkConn(Open(dsn))
 	for _, query := range queries {
-		if _, err := db.Exec(query); err != nil {
-			if w, ok := err.(MySQLWarnings); ok {
+		if _, err := conn.Exec(query); err != nil {
+			if w, ok := err.(Warnings); ok {
 				b.Logf("Warning on %q: %v", query, w)
 			} else {
 				b.Fatalf("Error on %q: %v", query, err)
 			}
 		}
 	}
-	return db
+	return conn
 }
 
 const concurrencyLevel = 10
 
 func BenchmarkQuery(b *testing.B) {
 	tb := (*TB)(b)
-	b.StopTimer()
-	b.ReportAllocs()
-	db := initDB(b,
+
+	conn := initConn(b,
 		"DROP TABLE IF EXISTS foo",
 		"CREATE TABLE foo (id INT PRIMARY KEY, val CHAR(50))",
 		`INSERT INTO foo VALUES (1, "one")`,
 		`INSERT INTO foo VALUES (2, "two")`,
 	)
-	db.SetMaxIdleConns(concurrencyLevel)
-	defer db.Close()
+	defer conn.Close()
 
-	stmt := tb.checkStmt(db.Prepare("SELECT val FROM foo WHERE id=?"))
+	stmt := tb.checkStmt(conn.Prepare("SELECT val FROM foo WHERE id=?"))
 	defer stmt.Close()
 
-	remain := int64(b.N)
-	var wg sync.WaitGroup
-	wg.Add(concurrencyLevel)
-	defer wg.Wait()
-	b.StartTimer()
+	b.ReportAllocs()
+	b.ResetTimer()
 
-	for i := 0; i < concurrencyLevel; i++ {
-		go func() {
-			for {
-				if atomic.AddInt64(&remain, -1) < 0 {
-					wg.Done()
-					return
-				}
-
-				var got string
-				tb.check(stmt.QueryRow(1).Scan(&got))
-				if got != "one" {
-					b.Errorf("query = %q; want one", got)
-					wg.Done()
-					return
-				}
-			}
-		}()
+	for i := 0; i < b.N; i++ {
+		var got string
+		// TODO
+		//tb.check(stmt.QueryRow(1).Scan(&got))
+		rows, err := stmt.Query(1)
+		tb.check(err)
+		if rows.Next(&got) != io.EOF {
+			b.Fatal("received more than one row")
+		}
+		if got != "one" {
+			b.Errorf("query = %q; want one", got)
+			return
+		}
 	}
 }
 
 func BenchmarkExec(b *testing.B) {
 	tb := (*TB)(b)
-	b.StopTimer()
-	b.ReportAllocs()
-	db := tb.checkDB(sql.Open("mysql", dsn))
-	db.SetMaxIdleConns(concurrencyLevel)
-	defer db.Close()
 
-	stmt := tb.checkStmt(db.Prepare("DO 1"))
+	conn := tb.checkConn(Open(dsn))
+	defer conn.Close()
+
+	stmt := tb.checkStmt(conn.Prepare("DO 1"))
 	defer stmt.Close()
 
-	remain := int64(b.N)
-	var wg sync.WaitGroup
-	wg.Add(concurrencyLevel)
-	defer wg.Wait()
-	b.StartTimer()
+	b.ReportAllocs()
+	b.ResetTimer()
 
-	for i := 0; i < concurrencyLevel; i++ {
-		go func() {
-			for {
-				if atomic.AddInt64(&remain, -1) < 0 {
-					wg.Done()
-					return
-				}
-
-				if _, err := stmt.Exec(); err != nil {
-					b.Fatal(err.Error())
-				}
-			}
-		}()
+	for i := 0; i < b.N; i++ {
+		if _, err := stmt.Exec(); err != nil {
+			b.Fatal(err.Error())
+		}
 	}
 }
 
@@ -146,14 +120,16 @@ func initRoundtripBenchmarks() ([]byte, int, int) {
 }
 
 func BenchmarkRoundtripTxt(b *testing.B) {
-	b.StopTimer()
 	sample, min, max := initRoundtripBenchmarks()
 	sampleString := string(sample)
-	b.ReportAllocs()
+
 	tb := (*TB)(b)
-	db := tb.checkDB(sql.Open("mysql", dsn))
-	defer db.Close()
-	b.StartTimer()
+	conn := tb.checkConn(Open(dsn))
+	defer conn.Close()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
 	var result string
 	for i := 0; i < b.N; i++ {
 		length := min + i
@@ -161,12 +137,10 @@ func BenchmarkRoundtripTxt(b *testing.B) {
 			length = max
 		}
 		test := sampleString[0:length]
-		rows := tb.checkRows(db.Query(`SELECT "` + test + `"`))
-		if !rows.Next() {
-			rows.Close()
-			b.Fatalf("crashed")
-		}
-		err := rows.Scan(&result)
+		rows := tb.checkRows(conn.Query(`SELECT "` + test + `"`))
+
+		// TODO
+		err := rows.Next(&result)
 		if err != nil {
 			rows.Close()
 			b.Fatalf("crashed")
@@ -180,16 +154,19 @@ func BenchmarkRoundtripTxt(b *testing.B) {
 }
 
 func BenchmarkRoundtripBin(b *testing.B) {
-	b.StopTimer()
 	sample, min, max := initRoundtripBenchmarks()
-	b.ReportAllocs()
+
 	tb := (*TB)(b)
-	db := tb.checkDB(sql.Open("mysql", dsn))
-	defer db.Close()
-	stmt := tb.checkStmt(db.Prepare("SELECT ?"))
+	conn := tb.checkConn(Open(dsn))
+	defer conn.Close()
+
+	stmt := tb.checkStmt(conn.Prepare("SELECT ?"))
 	defer stmt.Close()
-	b.StartTimer()
-	var result sql.RawBytes
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	var result []byte // TODO RawBytes
 	for i := 0; i < b.N; i++ {
 		length := min + i
 		if length > max {
@@ -197,11 +174,8 @@ func BenchmarkRoundtripBin(b *testing.B) {
 		}
 		test := sample[0:length]
 		rows := tb.checkRows(stmt.Query(test))
-		if !rows.Next() {
-			rows.Close()
-			b.Fatalf("crashed")
-		}
-		err := rows.Scan(&result)
+		// TODO
+		err := rows.Next(&result)
 		if err != nil {
 			rows.Close()
 			b.Fatalf("crashed")
@@ -215,17 +189,16 @@ func BenchmarkRoundtripBin(b *testing.B) {
 }
 
 func BenchmarkInterpolation(b *testing.B) {
-	mc := &mysqlConn{
+	mc := &Conn{
 		cfg: &Config{
-			InterpolateParams: true,
-			Loc:               time.UTC,
+			Loc: time.UTC,
 		},
 		maxPacketAllowed: maxPacketSize,
 		maxWriteSize:     maxPacketSize - 1,
 		buf:              newBuffer(nil),
 	}
 
-	args := []driver.Value{
+	args := []interface{}{
 		int64(42424242),
 		float64(math.Pi),
 		false,

@@ -6,12 +6,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package mysql
+package gmysql
 
 import (
 	"crypto/sha1"
 	"crypto/tls"
-	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -241,14 +240,6 @@ func (nt *NullTime) Scan(value interface{}) (err error) {
 	return fmt.Errorf("Can't convert %T to time.Time", value)
 }
 
-// Value implements the driver Valuer interface.
-func (nt NullTime) Value() (driver.Value, error) {
-	if !nt.Valid {
-		return nil, nil
-	}
-	return nt.Time, nil
-}
-
 func parseDateTime(str string, loc *time.Location) (t time.Time, err error) {
 	base := "0000-00-00 00:00:00.0000000"
 	switch len(str) {
@@ -272,7 +263,7 @@ func parseDateTime(str string, loc *time.Location) (t time.Time, err error) {
 	return
 }
 
-func parseBinaryDateTime(num uint64, data []byte, loc *time.Location) (driver.Value, error) {
+func parseBinaryDateTime(num uint64, data []byte, loc *time.Location) (interface{}, error) {
 	switch num {
 	case 0:
 		return time.Time{}, nil
@@ -319,7 +310,7 @@ var zeroDateTime = []byte("0000-00-00 00:00:00.000000")
 const digits01 = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
 const digits10 = "0000000000111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999"
 
-func formatBinaryDateTime(src []byte, length uint8, justTime bool) (driver.Value, error) {
+func formatBinaryDateTime(src []byte, length uint8, justTime bool) (interface{}, error) {
 	// length expects the deterministic length of the zero value,
 	// negative time and 100+ hours are automatically added if needed
 	if len(src) == 0 {

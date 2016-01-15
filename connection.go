@@ -6,17 +6,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package mysql
+package gmysql
 
 import (
-	"database/sql/driver"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 )
 
-type mysqlConn struct {
+type Conn struct {
 	buf              buffer
 	netConn          net.Conn
 	affectedRows     uint64
@@ -31,16 +30,145 @@ type mysqlConn struct {
 	strict           bool
 }
 
+// DialFunc is a function which can be used to establish the network connection.
+// Custom dial functions must be registered with RegisterDial
+type DialFunc func(addr string) (net.Conn, error)
+
+var dials map[string]DialFunc
+
+// RegisterDial registers a custom dial function. It can then be used by the
+// network address mynet(addr), where mynet is the registered new network.
+// addr is passed as a parameter to the dial function.
+func RegisterDial(net string, dial DialFunc) {
+	if dials == nil {
+		dials = make(map[string]DialFunc)
+	}
+	dials[net] = dial
+}
+
+// Open opens a new connection
+func Open(dsn string) (*Conn, error) {
+	var err error
+
+	// New mysqlConn
+	conn := &Conn{
+		maxPacketAllowed: maxPacketSize,
+		maxWriteSize:     maxPacketSize - 1,
+	}
+	conn.cfg, err = ParseDSN(dsn)
+	if err != nil {
+		return nil, err
+	}
+	conn.parseTime = conn.cfg.ParseTime
+	conn.strict = conn.cfg.Strict
+
+	// Connect to Server
+	if dial, ok := dials[conn.cfg.Net]; ok {
+		conn.netConn, err = dial(conn.cfg.Addr)
+	} else {
+		nd := net.Dialer{Timeout: conn.cfg.Timeout}
+		conn.netConn, err = nd.Dial(conn.cfg.Net, conn.cfg.Addr)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Enable TCP Keepalives on TCP connections
+	if tc, ok := conn.netConn.(*net.TCPConn); ok {
+		if err := tc.SetKeepAlive(true); err != nil {
+			// Don't send COM_QUIT before handshake.
+			conn.netConn.Close()
+			conn.netConn = nil
+			return nil, err
+		}
+	}
+
+	conn.buf = newBuffer(conn.netConn)
+
+	// Reading Handshake Initialization Packet
+	cipher, err := conn.readInitPacket()
+	if err != nil {
+		conn.cleanup()
+		return nil, err
+	}
+
+	// Send Client Authentication Packet
+	if err = conn.writeAuthPacket(cipher); err != nil {
+		conn.cleanup()
+		return nil, err
+	}
+
+	// Handle response to auth packet, switch methods if possible
+	if err = conn.handleAuthResult(cipher); err != nil {
+		// Authentication failed and MySQL has already closed the connection
+		// (https://dev.mysql.com/doc/internals/en/authentication-fails.html).
+		// Do not send COM_QUIT, just cleanup and return the error.
+		conn.cleanup()
+		return nil, err
+	}
+
+	// Get max allowed packet size
+	maxap, err := conn.getSystemVar("max_allowed_packet")
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	conn.maxPacketAllowed = stringToInt(maxap) - 1
+	if conn.maxPacketAllowed < maxPacketSize {
+		conn.maxWriteSize = conn.maxPacketAllowed
+	}
+
+	// Handle DSN Params
+	err = conn.handleParams()
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	return conn, nil
+}
+
+func (conn *Conn) handleAuthResult(cipher []byte) (err error) {
+	// Read Result Packet
+	if err = conn.readResultOK(); err == nil {
+		return // auth successful
+	}
+
+	if conn.cfg == nil {
+		return // auth failed and retry not possible
+	}
+
+	// Retry auth if configured to do so.
+	if conn.cfg.AllowOldPasswords && err == ErrOldPassword {
+		// Retry with old authentication method. Note: there are edge cases
+		// where this should work but doesn't; this is currently "wontfix":
+		// https://github.com/go-sql-driver/mysql/issues/184
+		if err = conn.writeOldAuthPacket(cipher); err != nil {
+			return
+		}
+		err = conn.readResultOK()
+	} else if conn.cfg.AllowCleartextPasswords && err == ErrCleartextPassword {
+		// Retry with clear text password for
+		// http://dev.mysql.com/doc/refman/5.7/en/cleartext-authentication-plugin.html
+		// http://dev.mysql.com/doc/refman/5.7/en/pam-authentication-plugin.html
+		if err = conn.writeClearAuthPacket(); err != nil {
+			return
+		}
+		err = conn.readResultOK()
+	}
+	return
+}
+
 // Handles parameters set in DSN after the connection is established
-func (mc *mysqlConn) handleParams() (err error) {
-	for param, val := range mc.cfg.Params {
+func (conn *Conn) handleParams() (err error) {
+	for param, val := range conn.cfg.Params {
 		switch param {
 		// Charset
 		case "charset":
 			charsets := strings.Split(val, ",")
 			for i := range charsets {
 				// ignore errors here - a charset may not exist
-				err = mc.exec("SET NAMES " + charsets[i])
+				err = conn.exec("SET NAMES " + charsets[i])
 				if err == nil {
 					break
 				}
@@ -51,36 +179,22 @@ func (mc *mysqlConn) handleParams() (err error) {
 
 		// System Vars
 		default:
-			err = mc.exec("SET " + param + "=" + val + "")
+			err = conn.exec("SET " + param + "=" + val + "")
 			if err != nil {
 				return
 			}
 		}
 	}
-
 	return
 }
 
-func (mc *mysqlConn) Begin() (driver.Tx, error) {
-	if mc.netConn == nil {
-		errLog.Print(ErrInvalidConn)
-		return nil, driver.ErrBadConn
-	}
-	err := mc.exec("START TRANSACTION")
-	if err == nil {
-		return &mysqlTx{mc}, err
-	}
-
-	return nil, err
-}
-
-func (mc *mysqlConn) Close() (err error) {
+func (conn *Conn) Close() (err error) {
 	// Makes Close idempotent
-	if mc.netConn != nil {
-		err = mc.writeCommandPacket(comQuit)
+	if conn.netConn != nil {
+		err = conn.writeCommandPacket(comQuit)
 	}
 
-	mc.cleanup()
+	conn.cleanup()
 
 	return
 }
@@ -89,56 +203,23 @@ func (mc *mysqlConn) Close() (err error) {
 // function after successfully authentication, call Close instead. This function
 // is called before auth or on auth failure because MySQL will have already
 // closed the network connection.
-func (mc *mysqlConn) cleanup() {
+func (conn *Conn) cleanup() {
 	// Makes cleanup idempotent
-	if mc.netConn != nil {
-		if err := mc.netConn.Close(); err != nil {
+	if conn.netConn != nil {
+		if err := conn.netConn.Close(); err != nil {
 			errLog.Print(err)
 		}
-		mc.netConn = nil
+		conn.netConn = nil
 	}
-	mc.cfg = nil
-	mc.buf.rd = nil
+	conn.cfg = nil
+	conn.buf.rd = nil
 }
 
-func (mc *mysqlConn) Prepare(query string) (driver.Stmt, error) {
-	if mc.netConn == nil {
-		errLog.Print(ErrInvalidConn)
-		return nil, driver.ErrBadConn
-	}
-	// Send command
-	err := mc.writeCommandPacketStr(comStmtPrepare, query)
-	if err != nil {
-		return nil, err
-	}
-
-	stmt := &mysqlStmt{
-		mc: mc,
-	}
-
-	// Read Result
-	columnCount, err := stmt.readPrepareResultPacket()
-	if err == nil {
-		if stmt.paramCount > 0 {
-			if err = mc.readUntilEOF(); err != nil {
-				return nil, err
-			}
-		}
-
-		if columnCount > 0 {
-			err = mc.readUntilEOF()
-		}
-	}
-
-	return stmt, err
-}
-
-func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (string, error) {
-	buf := mc.buf.takeCompleteBuffer()
+func (conn *Conn) interpolateParams(query string, args []interface{}) (string, error) {
+	buf := conn.buf.takeCompleteBuffer()
 	if buf == nil {
 		// can not take the buffer. Something must be wrong with the connection
-		errLog.Print(ErrBusyBuffer)
-		return "", driver.ErrBadConn
+		return "", ErrBusyBuffer
 	}
 	buf = buf[:0]
 	argPos := 0
@@ -175,7 +256,7 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 			if v.IsZero() {
 				buf = append(buf, "'0000-00-00'"...)
 			} else {
-				v := v.In(mc.cfg.Loc)
+				v := v.In(conn.cfg.Loc)
 				v = v.Add(time.Nanosecond * 500) // To round under microsecond
 				year := v.Year()
 				year100 := year / 100
@@ -221,7 +302,7 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 				buf = append(buf, "NULL"...)
 			} else {
 				buf = append(buf, "_binary'"...)
-				if mc.status&statusNoBackslashEscapes == 0 {
+				if conn.status&statusNoBackslashEscapes == 0 {
 					buf = escapeBytesBackslash(buf, v)
 				} else {
 					buf = escapeBytesQuotes(buf, v)
@@ -230,141 +311,129 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 			}
 		case string:
 			buf = append(buf, '\'')
-			if mc.status&statusNoBackslashEscapes == 0 {
+			if conn.status&statusNoBackslashEscapes == 0 {
 				buf = escapeStringBackslash(buf, v)
 			} else {
 				buf = escapeStringQuotes(buf, v)
 			}
 			buf = append(buf, '\'')
 		default:
-			return "", driver.ErrSkip
+			//fmt.Printf("arg: %#v \n", arg) // DEBUG
+			return "", ErrUnsafeInterpolate
 		}
 
-		if len(buf)+4 > mc.maxPacketAllowed {
-			return "", driver.ErrSkip
+		if len(buf)+4 > conn.maxPacketAllowed {
+			return "", ErrPktTooLarge // TODO?
 		}
 	}
 	if argPos != len(args) {
-		return "", driver.ErrSkip
+		return "", ErrInterpolateFailed // TODO
 	}
 	return string(buf), nil
 }
 
-func (mc *mysqlConn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	if mc.netConn == nil {
-		errLog.Print(ErrInvalidConn)
-		return nil, driver.ErrBadConn
+func (conn *Conn) Exec(query string, args ...interface{}) (res Result, err error) {
+	if conn.netConn == nil {
+		err = ErrInvalidConn
+		return
 	}
 	if len(args) != 0 {
-		if !mc.cfg.InterpolateParams {
-			return nil, driver.ErrSkip
-		}
 		// try to interpolate the parameters to save extra roundtrips for preparing and closing a statement
-		prepared, err := mc.interpolateParams(query, args)
+		query, err = conn.interpolateParams(query, args)
 		if err != nil {
-			return nil, err
+			return
 		}
-		query = prepared
 		args = nil
 	}
-	mc.affectedRows = 0
-	mc.insertId = 0
+	conn.affectedRows = 0
+	conn.insertId = 0
 
-	err := mc.exec(query)
-	if err == nil {
-		return &mysqlResult{
-			affectedRows: int64(mc.affectedRows),
-			insertId:     int64(mc.insertId),
-		}, err
+	if err = conn.exec(query); err == nil {
+		res.affectedRows = int64(conn.affectedRows)
+		res.insertId = int64(conn.insertId)
 	}
-	return nil, err
+	return
 }
 
 // Internal function to execute commands
-func (mc *mysqlConn) exec(query string) error {
+func (conn *Conn) exec(query string) error {
 	// Send command
-	err := mc.writeCommandPacketStr(comQuery, query)
+	err := conn.writeCommandPacketStr(comQuery, query)
 	if err != nil {
 		return err
 	}
 
 	// Read Result
-	resLen, err := mc.readResultSetHeaderPacket()
+	resLen, err := conn.readResultSetHeaderPacket()
 	if err == nil && resLen > 0 {
-		if err = mc.readUntilEOF(); err != nil {
+		if err = conn.readUntilEOF(); err != nil {
 			return err
 		}
 
-		err = mc.readUntilEOF()
+		err = conn.readUntilEOF()
 	}
 
 	return err
 }
 
-func (mc *mysqlConn) Query(query string, args []driver.Value) (driver.Rows, error) {
-	if mc.netConn == nil {
-		errLog.Print(ErrInvalidConn)
-		return nil, driver.ErrBadConn
+func (conn *Conn) Query(query string, args ...interface{}) (rows Rows, err error) {
+	if conn.netConn == nil {
+		return nil, ErrInvalidConn
 	}
 	if len(args) != 0 {
-		if !mc.cfg.InterpolateParams {
-			return nil, driver.ErrSkip
-		}
 		// try client-side prepare to reduce roundtrip
-		prepared, err := mc.interpolateParams(query, args)
+		query, err = conn.interpolateParams(query, args)
 		if err != nil {
-			return nil, err
+			return
 		}
-		query = prepared
 		args = nil
 	}
 	// Send command
-	err := mc.writeCommandPacketStr(comQuery, query)
-	if err == nil {
+	if err = conn.writeCommandPacketStr(comQuery, query); err == nil {
 		// Read Result
 		var resLen int
-		resLen, err = mc.readResultSetHeaderPacket()
+		resLen, err = conn.readResultSetHeaderPacket()
 		if err == nil {
-			rows := new(textRows)
-			rows.mc = mc
+			tr := new(textRows)
+			tr.conn = conn
 
 			if resLen == 0 {
 				// no columns, no more data
 				return emptyRows{}, nil
 			}
 			// Columns
-			rows.columns, err = mc.readColumns(resLen)
-			return rows, err
+			tr.columns, err = conn.readColumns(resLen)
+			return tr, err
 		}
 	}
-	return nil, err
+	return
 }
 
 // Gets the value of the given MySQL System Variable
 // The returned byte slice is only valid until the next read
-func (mc *mysqlConn) getSystemVar(name string) ([]byte, error) {
+func (conn *Conn) getSystemVar(name string) ([]byte, error) {
 	// Send command
-	if err := mc.writeCommandPacketStr(comQuery, "SELECT @@"+name); err != nil {
+	if err := conn.writeCommandPacketStr(comQuery, "SELECT @@"+name); err != nil {
 		return nil, err
 	}
 
 	// Read Result
-	resLen, err := mc.readResultSetHeaderPacket()
+	resLen, err := conn.readResultSetHeaderPacket()
 	if err == nil {
-		rows := new(textRows)
-		rows.mc = mc
-		rows.columns = []mysqlField{{fieldType: fieldTypeVarChar}}
+		tr := new(textRows)
+		tr.conn = conn
+		tr.columns = []Field{{fieldType: fieldTypeVarChar}}
 
 		if resLen > 0 {
 			// Columns
-			if err := mc.readUntilEOF(); err != nil {
+			if err := conn.readUntilEOF(); err != nil {
 				return nil, err
 			}
 		}
 
-		dest := make([]driver.Value, resLen)
-		if err = rows.readRow(dest); err == nil {
-			return dest[0].([]byte), mc.readUntilEOF()
+		dest := make([]interface{}, resLen)
+		if err = tr.readRow(dest); err == nil {
+			return dest[0].([]byte), conn.readUntilEOF()
 		}
 	}
 	return nil, err

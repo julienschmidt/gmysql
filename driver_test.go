@@ -6,23 +6,21 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package mysql
+package gmysql
 
 import (
-	"bytes"
-	"crypto/tls"
-	"database/sql"
-	"database/sql/driver"
+	//"bytes"
+	//"crypto/tls"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"log"
+	//"io/ioutil"
+	//"log"
 	"net"
-	"net/url"
+	//"net/url"
 	"os"
-	"strings"
-	"sync"
-	"sync/atomic"
+	//"strings"
+	//"sync"
+	//"sync/atomic"
 	"testing"
 	"time"
 )
@@ -71,269 +69,255 @@ func init() {
 	}
 }
 
-type DBTest struct {
+type ConnTest struct {
 	*testing.T
-	db *sql.DB
+	conn *Conn
 }
 
-func runTests(t *testing.T, dsn string, tests ...func(dbt *DBTest)) {
+func runTests(t *testing.T, dsn string, tests ...func(ct *ConnTest)) {
 	if !available {
 		t.Skipf("MySQL-Server not running on %s", netAddr)
 	}
 
-	db, err := sql.Open("mysql", dsn)
+	conn, err := Open(dsn)
 	if err != nil {
 		t.Fatalf("Error connecting: %s", err.Error())
 	}
-	defer db.Close()
+	defer conn.Close()
 
-	db.Exec("DROP TABLE IF EXISTS test")
+	conn.Exec("DROP TABLE IF EXISTS test")
 
-	dsn2 := dsn + "&interpolateParams=true"
-	var db2 *sql.DB
-	if _, err := ParseDSN(dsn2); err != errInvalidDSNUnsafeCollation {
-		db2, err = sql.Open("mysql", dsn2)
-		if err != nil {
-			t.Fatalf("Error connecting: %s", err.Error())
-		}
-		defer db2.Close()
-	}
-
-	dbt := &DBTest{t, db}
-	dbt2 := &DBTest{t, db2}
+	ct := &ConnTest{t, conn}
 	for _, test := range tests {
-		test(dbt)
-		dbt.db.Exec("DROP TABLE IF EXISTS test")
-		if db2 != nil {
-			test(dbt2)
-			dbt2.db.Exec("DROP TABLE IF EXISTS test")
-		}
+		test(ct)
+		ct.conn.Exec("DROP TABLE IF EXISTS test")
 	}
 }
 
-func (dbt *DBTest) fail(method, query string, err error) {
+func (ct *ConnTest) fail(method, query string, err error) {
 	if len(query) > 300 {
 		query = "[query too large to print]"
 	}
-	dbt.Fatalf("Error on %s %s: %s", method, query, err.Error())
+	ct.Fatalf("Error on %s %s: %s", method, query, err.Error())
 }
 
-func (dbt *DBTest) mustExec(query string, args ...interface{}) (res sql.Result) {
-	res, err := dbt.db.Exec(query, args...)
+func (ct *ConnTest) mustExec(query string, args ...interface{}) (res Result) {
+	res, err := ct.conn.Exec(query, args...)
 	if err != nil {
-		dbt.fail("Exec", query, err)
+		ct.fail("Exec", query, err)
 	}
 	return res
 }
 
-func (dbt *DBTest) mustQuery(query string, args ...interface{}) (rows *sql.Rows) {
-	rows, err := dbt.db.Query(query, args...)
+func (ct *ConnTest) mustQuery(query string, args ...interface{}) (rows Rows) {
+	rows, err := ct.conn.Query(query, args...)
 	if err != nil {
-		dbt.fail("Query", query, err)
+		ct.fail("Query", query, err)
 	}
 	return rows
 }
 
 func TestEmptyQuery(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		// just a comment, no query
-		rows := dbt.mustQuery("--")
+		rows := ct.mustQuery("--")
 		// will hang before #255
-		if rows.Next() {
-			dbt.Errorf("Next on rows must be false")
+		if rows.Next() != io.EOF { // TODO
+			ct.Errorf("Next on rows must be false")
 		}
 	})
 }
 
 func TestCRUD(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		// Create Table
-		dbt.mustExec("CREATE TABLE test (value BOOL)")
+		ct.mustExec("CREATE TABLE test (value BOOL)")
 
 		// Test for unexpected data
-		var out bool
-		rows := dbt.mustQuery("SELECT * FROM test")
-		if rows.Next() {
-			dbt.Error("unexpected data in empty table")
+		//var out bool
+		rows := ct.mustQuery("SELECT * FROM test")
+		if rows.Next() != io.EOF { // TODO
+			ct.Error("unexpected data in empty table")
 		}
 
 		// Create Data
-		res := dbt.mustExec("INSERT INTO test VALUES (1)")
+		res := ct.mustExec("INSERT INTO test VALUES (1)")
 		count, err := res.RowsAffected()
 		if err != nil {
-			dbt.Fatalf("res.RowsAffected() returned error: %s", err.Error())
+			ct.Fatalf("res.RowsAffected() returned error: %s", err.Error())
 		}
 		if count != 1 {
-			dbt.Fatalf("Expected 1 affected row, got %d", count)
+			ct.Fatalf("Expected 1 affected row, got %d", count)
 		}
 
 		id, err := res.LastInsertId()
 		if err != nil {
-			dbt.Fatalf("res.LastInsertId() returned error: %s", err.Error())
+			ct.Fatalf("res.LastInsertId() returned error: %s", err.Error())
 		}
 		if id != 0 {
-			dbt.Fatalf("Expected InsertID 0, got %d", id)
+			ct.Fatalf("Expected InsertID 0, got %d", id)
 		}
 
 		// Read
-		rows = dbt.mustQuery("SELECT value FROM test")
-		if rows.Next() {
-			rows.Scan(&out)
+		/*rows = ct.mustQuery("SELECT value FROM test")
+		err = rows.Next(&out) // TODO
+		if err != io.EOF {
 			if true != out {
-				dbt.Errorf("true != %t", out)
+				ct.Fatalf("true != %t", out) // TODO Errorf
 			}
 
-			if rows.Next() {
-				dbt.Error("unexpected data")
+			if rows.Next() != io.EOF {
+				ct.Error("unexpected data")
 			}
 		} else {
-			dbt.Error("no data")
-		}
+			ct.Error("no data")
+		}*/
 
 		// Update
-		res = dbt.mustExec("UPDATE test SET value = ? WHERE value = ?", false, true)
+		res = ct.mustExec("UPDATE test SET value = ? WHERE value = ?", false, true)
 		count, err = res.RowsAffected()
 		if err != nil {
-			dbt.Fatalf("res.RowsAffected() returned error: %s", err.Error())
+			ct.Fatalf("res.RowsAffected() returned error: %s", err.Error())
 		}
 		if count != 1 {
-			dbt.Fatalf("Expected 1 affected row, got %d", count)
+			ct.Fatalf("Expected 1 affected row, got %d", count)
 		}
 
 		// Check Update
-		rows = dbt.mustQuery("SELECT value FROM test")
-		if rows.Next() {
-			rows.Scan(&out)
+		/*rows = ct.mustQuery("SELECT value FROM test")
+		err = rows.Next(&out) // TODO
+		if err != io.EOF {
 			if false != out {
-				dbt.Errorf("false != %t", out)
+				ct.Errorf("false != %t", out)
 			}
 
-			if rows.Next() {
-				dbt.Error("unexpected data")
+			if rows.Next() != io.EOF {
+				ct.Error("unexpected data")
 			}
 		} else {
-			dbt.Error("no data")
-		}
+			ct.Error("no data")
+		}*/
 
 		// Delete
-		res = dbt.mustExec("DELETE FROM test WHERE value = ?", false)
+		res = ct.mustExec("DELETE FROM test WHERE value = ?", false)
 		count, err = res.RowsAffected()
 		if err != nil {
-			dbt.Fatalf("res.RowsAffected() returned error: %s", err.Error())
+			ct.Fatalf("res.RowsAffected() returned error: %s", err.Error())
 		}
 		if count != 1 {
-			dbt.Fatalf("Expected 1 affected row, got %d", count)
+			ct.Fatalf("Expected 1 affected row, got %d", count)
 		}
 
 		// Check for unexpected rows
-		res = dbt.mustExec("DELETE FROM test")
+		res = ct.mustExec("DELETE FROM test")
 		count, err = res.RowsAffected()
 		if err != nil {
-			dbt.Fatalf("res.RowsAffected() returned error: %s", err.Error())
+			ct.Fatalf("res.RowsAffected() returned error: %s", err.Error())
 		}
 		if count != 0 {
-			dbt.Fatalf("Expected 0 affected row, got %d", count)
+			ct.Fatalf("Expected 0 affected row, got %d", count)
 		}
 	})
 }
 
+/*
 func TestInt(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		types := [5]string{"TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT"}
 		in := int64(42)
 		var out int64
-		var rows *sql.Rows
+		var rows Rows
 
 		// SIGNED
 		for _, v := range types {
-			dbt.mustExec("CREATE TABLE test (value " + v + ")")
+			ct.mustExec("CREATE TABLE test (value " + v + ")")
 
-			dbt.mustExec("INSERT INTO test VALUES (?)", in)
+			ct.mustExec("INSERT INTO test VALUES (?)", in)
 
-			rows = dbt.mustQuery("SELECT value FROM test")
+			rows = ct.mustQuery("SELECT value FROM test")
 			if rows.Next() {
 				rows.Scan(&out)
 				if in != out {
-					dbt.Errorf("%s: %d != %d", v, in, out)
+					ct.Errorf("%s: %d != %d", v, in, out)
 				}
 			} else {
-				dbt.Errorf("%s: no data", v)
+				ct.Errorf("%s: no data", v)
 			}
 
-			dbt.mustExec("DROP TABLE IF EXISTS test")
+			ct.mustExec("DROP TABLE IF EXISTS test")
 		}
 
 		// UNSIGNED ZEROFILL
 		for _, v := range types {
-			dbt.mustExec("CREATE TABLE test (value " + v + " ZEROFILL)")
+			ct.mustExec("CREATE TABLE test (value " + v + " ZEROFILL)")
 
-			dbt.mustExec("INSERT INTO test VALUES (?)", in)
+			ct.mustExec("INSERT INTO test VALUES (?)", in)
 
-			rows = dbt.mustQuery("SELECT value FROM test")
+			rows = ct.mustQuery("SELECT value FROM test")
 			if rows.Next() {
 				rows.Scan(&out)
 				if in != out {
-					dbt.Errorf("%s ZEROFILL: %d != %d", v, in, out)
+					ct.Errorf("%s ZEROFILL: %d != %d", v, in, out)
 				}
 			} else {
-				dbt.Errorf("%s ZEROFILL: no data", v)
+				ct.Errorf("%s ZEROFILL: no data", v)
 			}
 
-			dbt.mustExec("DROP TABLE IF EXISTS test")
+			ct.mustExec("DROP TABLE IF EXISTS test")
 		}
 	})
 }
 
 func TestFloat(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		types := [2]string{"FLOAT", "DOUBLE"}
 		in := float32(42.23)
 		var out float32
 		var rows *sql.Rows
 		for _, v := range types {
-			dbt.mustExec("CREATE TABLE test (value " + v + ")")
-			dbt.mustExec("INSERT INTO test VALUES (?)", in)
-			rows = dbt.mustQuery("SELECT value FROM test")
+			ct.mustExec("CREATE TABLE test (value " + v + ")")
+			ct.mustExec("INSERT INTO test VALUES (?)", in)
+			rows = ct.mustQuery("SELECT value FROM test")
 			if rows.Next() {
 				rows.Scan(&out)
 				if in != out {
-					dbt.Errorf("%s: %g != %g", v, in, out)
+					ct.Errorf("%s: %g != %g", v, in, out)
 				}
 			} else {
-				dbt.Errorf("%s: no data", v)
+				ct.Errorf("%s: no data", v)
 			}
-			dbt.mustExec("DROP TABLE IF EXISTS test")
+			ct.mustExec("DROP TABLE IF EXISTS test")
 		}
 	})
 }
 
 func TestString(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		types := [6]string{"CHAR(255)", "VARCHAR(255)", "TINYTEXT", "TEXT", "MEDIUMTEXT", "LONGTEXT"}
 		in := "κόσμε üöäßñóùéàâÿœ'îë Árvíztűrő いろはにほへとちりぬるを イロハニホヘト דג סקרן чащах  น่าฟังเอย"
 		var out string
 		var rows *sql.Rows
 
 		for _, v := range types {
-			dbt.mustExec("CREATE TABLE test (value " + v + ") CHARACTER SET utf8")
+			ct.mustExec("CREATE TABLE test (value " + v + ") CHARACTER SET utf8")
 
-			dbt.mustExec("INSERT INTO test VALUES (?)", in)
+			ct.mustExec("INSERT INTO test VALUES (?)", in)
 
-			rows = dbt.mustQuery("SELECT value FROM test")
+			rows = ct.mustQuery("SELECT value FROM test")
 			if rows.Next() {
 				rows.Scan(&out)
 				if in != out {
-					dbt.Errorf("%s: %s != %s", v, in, out)
+					ct.Errorf("%s: %s != %s", v, in, out)
 				}
 			} else {
-				dbt.Errorf("%s: no data", v)
+				ct.Errorf("%s: no data", v)
 			}
 
-			dbt.mustExec("DROP TABLE IF EXISTS test")
+			ct.mustExec("DROP TABLE IF EXISTS test")
 		}
 
 		// BLOB
-		dbt.mustExec("CREATE TABLE test (id int, value BLOB) CHARACTER SET utf8")
+		ct.mustExec("CREATE TABLE test (id int, value BLOB) CHARACTER SET utf8")
 
 		id := 2
 		in = "Lorem ipsum dolor sit amet, consetetur sadipscing elitr, " +
@@ -344,13 +328,13 @@ func TestString(t *testing.T) {
 			"sed diam nonumy eirmod tempor invidunt ut labore et dolore magna aliquyam erat, " +
 			"sed diam voluptua. At vero eos et accusam et justo duo dolores et ea rebum. " +
 			"Stet clita kasd gubergren, no sea takimata sanctus est Lorem ipsum dolor sit amet."
-		dbt.mustExec("INSERT INTO test VALUES (?, ?)", id, in)
+		ct.mustExec("INSERT INTO test VALUES (?, ?)", id, in)
 
-		err := dbt.db.QueryRow("SELECT value FROM test WHERE id = ?", id).Scan(&out)
+		err := ct.conn.QueryRow("SELECT value FROM test WHERE id = ?", id).Scan(&out)
 		if err != nil {
-			dbt.Fatalf("Error on BLOB-Query: %s", err.Error())
+			ct.Fatalf("Error on BLOB-Query: %s", err.Error())
 		} else if out != in {
-			dbt.Errorf("BLOB: %s != %s", in, out)
+			ct.Errorf("BLOB: %s != %s", in, out)
 		}
 	})
 }
@@ -404,17 +388,17 @@ func (t timeTest) genQuery(dbtype string, mode timeMode) string {
 	return `SELECT cast(` + inner + ` as ` + dbtype + `)`
 }
 
-func (t timeTest) run(dbt *DBTest, dbtype, tlayout string, mode timeMode) {
+func (t timeTest) run(ct *ConnTest, dbtype, tlayout string, mode timeMode) {
 	var rows *sql.Rows
 	query := t.genQuery(dbtype, mode)
 	switch mode {
 	case binaryString:
-		rows = dbt.mustQuery(query, t.s)
+		rows = ct.mustQuery(query, t.s)
 	case binaryTime:
-		rows = dbt.mustQuery(query, t.t)
+		rows = ct.mustQuery(query, t.t)
 	case textString:
 		query = fmt.Sprintf(query, t.s)
-		rows = dbt.mustQuery(query)
+		rows = ct.mustQuery(query)
 	default:
 		panic("unsupported mode")
 	}
@@ -425,13 +409,13 @@ func (t timeTest) run(dbt *DBTest, dbtype, tlayout string, mode timeMode) {
 		if err == nil {
 			err = fmt.Errorf("no data")
 		}
-		dbt.Errorf("%s [%s]: %s", dbtype, mode, err)
+		ct.Errorf("%s [%s]: %s", dbtype, mode, err)
 		return
 	}
 	var dst interface{}
 	err = rows.Scan(&dst)
 	if err != nil {
-		dbt.Errorf("%s [%s]: %s", dbtype, mode, err)
+		ct.Errorf("%s [%s]: %s", dbtype, mode, err)
 		return
 	}
 	switch val := dst.(type) {
@@ -446,7 +430,7 @@ func (t timeTest) run(dbt *DBTest, dbtype, tlayout string, mode timeMode) {
 			// where the binary protocol was used
 			return
 		}
-		dbt.Errorf("%s [%s] to string: expected %q, got %q",
+		ct.Errorf("%s [%s] to string: expected %q, got %q",
 			dbtype, mode,
 			t.s, str,
 		)
@@ -454,13 +438,13 @@ func (t timeTest) run(dbt *DBTest, dbtype, tlayout string, mode timeMode) {
 		if val == t.t {
 			return
 		}
-		dbt.Errorf("%s [%s] to string: expected %q, got %q",
+		ct.Errorf("%s [%s] to string: expected %q, got %q",
 			dbtype, mode,
 			t.s, val.Format(tlayout),
 		)
 	default:
 		fmt.Printf("%#v\n", []interface{}{dbtype, tlayout, mode, t.s, t.t})
-		dbt.Errorf("%s [%s]: unhandled type %T (is '%v')",
+		ct.Errorf("%s [%s]: unhandled type %T (is '%v')",
 			dbtype, mode,
 			val, val,
 		)
@@ -534,17 +518,17 @@ func TestDateTime(t *testing.T) {
 		dsn + "&parseTime=false",
 	}
 	for _, testdsn := range dsns {
-		runTests(t, testdsn, func(dbt *DBTest) {
+		runTests(t, testdsn, func(ct *ConnTest) {
 			microsecsSupported := false
 			zeroDateSupported := false
 			var rows *sql.Rows
 			var err error
-			rows, err = dbt.db.Query(`SELECT cast("00:00:00.1" as TIME(1)) = "00:00:00.1"`)
+			rows, err = ct.conn.Query(`SELECT cast("00:00:00.1" as TIME(1)) = "00:00:00.1"`)
 			if err == nil {
 				rows.Scan(&microsecsSupported)
 				rows.Close()
 			}
-			rows, err = dbt.db.Query(`SELECT cast("0000-00-00" as DATE) = "0000-00-00"`)
+			rows, err = ct.conn.Query(`SELECT cast("0000-00-00" as DATE) = "0000-00-00"`)
 			if err == nil {
 				rows.Scan(&zeroDateSupported)
 				rows.Close()
@@ -585,13 +569,13 @@ func TestTimestampMicros(t *testing.T) {
 	f0 := format[:19]
 	f1 := format[:21]
 	f6 := format[:26]
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		// check if microseconds are supported.
 		// Do not use timestamp(x) for that check - before 5.5.6, x would mean display width
 		// and not precision.
 		// Se last paragraph at http://dev.mysql.com/doc/refman/5.6/en/fractional-seconds.html
 		microsecsSupported := false
-		if rows, err := dbt.db.Query(`SELECT cast("00:00:00.1" as TIME(1)) = "00:00:00.1"`); err == nil {
+		if rows, err := ct.conn.Query(`SELECT cast("00:00:00.1" as TIME(1)) = "00:00:00.1"`); err == nil {
 			rows.Scan(&microsecsSupported)
 			rows.Close()
 		}
@@ -599,7 +583,7 @@ func TestTimestampMicros(t *testing.T) {
 			// skip test
 			return
 		}
-		_, err := dbt.db.Exec(`
+		_, err := ct.conn.Exec(`
 			CREATE TABLE test (
 				value0 TIMESTAMP NOT NULL DEFAULT '` + f0 + `',
 				value1 TIMESTAMP(1) NOT NULL DEFAULT '` + f1 + `',
@@ -607,42 +591,42 @@ func TestTimestampMicros(t *testing.T) {
 			)`,
 		)
 		if err != nil {
-			dbt.Error(err)
+			ct.Error(err)
 		}
-		defer dbt.mustExec("DROP TABLE IF EXISTS test")
-		dbt.mustExec("INSERT INTO test SET value0=?, value1=?, value6=?", f0, f1, f6)
+		defer ct.mustExec("DROP TABLE IF EXISTS test")
+		ct.mustExec("INSERT INTO test SET value0=?, value1=?, value6=?", f0, f1, f6)
 		var res0, res1, res6 string
-		rows := dbt.mustQuery("SELECT * FROM test")
+		rows := ct.mustQuery("SELECT * FROM test")
 		if !rows.Next() {
-			dbt.Errorf("test contained no selectable values")
+			ct.Errorf("test contained no selectable values")
 		}
 		err = rows.Scan(&res0, &res1, &res6)
 		if err != nil {
-			dbt.Error(err)
+			ct.Error(err)
 		}
 		if res0 != f0 {
-			dbt.Errorf("expected %q, got %q", f0, res0)
+			ct.Errorf("expected %q, got %q", f0, res0)
 		}
 		if res1 != f1 {
-			dbt.Errorf("expected %q, got %q", f1, res1)
+			ct.Errorf("expected %q, got %q", f1, res1)
 		}
 		if res6 != f6 {
-			dbt.Errorf("expected %q, got %q", f6, res6)
+			ct.Errorf("expected %q, got %q", f6, res6)
 		}
 	})
 }
 
 func TestNULL(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
-		nullStmt, err := dbt.db.Prepare("SELECT NULL")
+	runTests(t, dsn, func(ct *ConnTest) {
+		nullStmt, err := ct.conn.Prepare("SELECT NULL")
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		defer nullStmt.Close()
 
-		nonNullStmt, err := dbt.db.Prepare("SELECT 1")
+		nonNullStmt, err := ct.conn.Prepare("SELECT 1")
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		defer nonNullStmt.Close()
 
@@ -650,134 +634,134 @@ func TestNULL(t *testing.T) {
 		var nb sql.NullBool
 		// Invalid
 		if err = nullStmt.QueryRow().Scan(&nb); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if nb.Valid {
-			dbt.Error("Valid NullBool which should be invalid")
+			ct.Error("Valid NullBool which should be invalid")
 		}
 		// Valid
 		if err = nonNullStmt.QueryRow().Scan(&nb); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if !nb.Valid {
-			dbt.Error("Invalid NullBool which should be valid")
+			ct.Error("Invalid NullBool which should be valid")
 		} else if nb.Bool != true {
-			dbt.Errorf("Unexpected NullBool value: %t (should be true)", nb.Bool)
+			ct.Errorf("Unexpected NullBool value: %t (should be true)", nb.Bool)
 		}
 
 		// NullFloat64
 		var nf sql.NullFloat64
 		// Invalid
 		if err = nullStmt.QueryRow().Scan(&nf); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if nf.Valid {
-			dbt.Error("Valid NullFloat64 which should be invalid")
+			ct.Error("Valid NullFloat64 which should be invalid")
 		}
 		// Valid
 		if err = nonNullStmt.QueryRow().Scan(&nf); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if !nf.Valid {
-			dbt.Error("Invalid NullFloat64 which should be valid")
+			ct.Error("Invalid NullFloat64 which should be valid")
 		} else if nf.Float64 != float64(1) {
-			dbt.Errorf("Unexpected NullFloat64 value: %f (should be 1.0)", nf.Float64)
+			ct.Errorf("Unexpected NullFloat64 value: %f (should be 1.0)", nf.Float64)
 		}
 
 		// NullInt64
 		var ni sql.NullInt64
 		// Invalid
 		if err = nullStmt.QueryRow().Scan(&ni); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if ni.Valid {
-			dbt.Error("Valid NullInt64 which should be invalid")
+			ct.Error("Valid NullInt64 which should be invalid")
 		}
 		// Valid
 		if err = nonNullStmt.QueryRow().Scan(&ni); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if !ni.Valid {
-			dbt.Error("Invalid NullInt64 which should be valid")
+			ct.Error("Invalid NullInt64 which should be valid")
 		} else if ni.Int64 != int64(1) {
-			dbt.Errorf("Unexpected NullInt64 value: %d (should be 1)", ni.Int64)
+			ct.Errorf("Unexpected NullInt64 value: %d (should be 1)", ni.Int64)
 		}
 
 		// NullString
 		var ns sql.NullString
 		// Invalid
 		if err = nullStmt.QueryRow().Scan(&ns); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if ns.Valid {
-			dbt.Error("Valid NullString which should be invalid")
+			ct.Error("Valid NullString which should be invalid")
 		}
 		// Valid
 		if err = nonNullStmt.QueryRow().Scan(&ns); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if !ns.Valid {
-			dbt.Error("Invalid NullString which should be valid")
+			ct.Error("Invalid NullString which should be valid")
 		} else if ns.String != `1` {
-			dbt.Error("Unexpected NullString value:" + ns.String + " (should be `1`)")
+			ct.Error("Unexpected NullString value:" + ns.String + " (should be `1`)")
 		}
 
 		// nil-bytes
 		var b []byte
 		// Read nil
 		if err = nullStmt.QueryRow().Scan(&b); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if b != nil {
-			dbt.Error("Non-nil []byte wich should be nil")
+			ct.Error("Non-nil []byte wich should be nil")
 		}
 		// Read non-nil
 		if err = nonNullStmt.QueryRow().Scan(&b); err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		if b == nil {
-			dbt.Error("Nil []byte wich should be non-nil")
+			ct.Error("Nil []byte wich should be non-nil")
 		}
 		// Insert nil
 		b = nil
 		success := false
-		if err = dbt.db.QueryRow("SELECT ? IS NULL", b).Scan(&success); err != nil {
-			dbt.Fatal(err)
+		if err = ct.conn.QueryRow("SELECT ? IS NULL", b).Scan(&success); err != nil {
+			ct.Fatal(err)
 		}
 		if !success {
-			dbt.Error("Inserting []byte(nil) as NULL failed")
+			ct.Error("Inserting []byte(nil) as NULL failed")
 		}
 		// Check input==output with input==nil
 		b = nil
-		if err = dbt.db.QueryRow("SELECT ?", b).Scan(&b); err != nil {
-			dbt.Fatal(err)
+		if err = ct.conn.QueryRow("SELECT ?", b).Scan(&b); err != nil {
+			ct.Fatal(err)
 		}
 		if b != nil {
-			dbt.Error("Non-nil echo from nil input")
+			ct.Error("Non-nil echo from nil input")
 		}
 		// Check input==output with input!=nil
 		b = []byte("")
-		if err = dbt.db.QueryRow("SELECT ?", b).Scan(&b); err != nil {
-			dbt.Fatal(err)
+		if err = ct.conn.QueryRow("SELECT ?", b).Scan(&b); err != nil {
+			ct.Fatal(err)
 		}
 		if b == nil {
-			dbt.Error("nil echo from non-nil input")
+			ct.Error("nil echo from non-nil input")
 		}
 
 		// Insert NULL
-		dbt.mustExec("CREATE TABLE test (dummmy1 int, value int, dummy2 int)")
+		ct.mustExec("CREATE TABLE test (dummmy1 int, value int, dummy2 int)")
 
-		dbt.mustExec("INSERT INTO test VALUES (?, ?, ?)", 1, nil, 2)
+		ct.mustExec("INSERT INTO test VALUES (?, ?, ?)", 1, nil, 2)
 
 		var out interface{}
-		rows := dbt.mustQuery("SELECT * FROM test")
+		rows := ct.mustQuery("SELECT * FROM test")
 		if rows.Next() {
 			rows.Scan(&out)
 			if out != nil {
-				dbt.Errorf("%v != nil", out)
+				ct.Errorf("%v != nil", out)
 			}
 		} else {
-			dbt.Error("no data")
+			ct.Error("no data")
 		}
 	})
 }
@@ -793,10 +777,10 @@ func TestUint64(t *testing.T) {
 		shigh = int64(uhigh)
 		stop  = ^shigh
 	)
-	runTests(t, dsn, func(dbt *DBTest) {
-		stmt, err := dbt.db.Prepare(`SELECT ?, ?, ? ,?, ?, ?, ?, ?`)
+	runTests(t, dsn, func(ct *ConnTest) {
+		stmt, err := ct.conn.Prepare(`SELECT ?, ?, ? ,?, ?, ?, ?, ?`)
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		defer stmt.Close()
 		row := stmt.QueryRow(
@@ -809,7 +793,7 @@ func TestUint64(t *testing.T) {
 
 		err = row.Scan(&ua, &ub, &uc, &ud, &sa, &sb, &sc, &sd)
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		switch {
 		case ua != u0,
@@ -820,17 +804,17 @@ func TestUint64(t *testing.T) {
 			sb != shigh,
 			sc != stop,
 			sd != sall:
-			dbt.Fatal("Unexpected result value")
+			ct.Fatal("Unexpected result value")
 		}
 	})
 }
 
 func TestLongData(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		var maxAllowedPacketSize int
-		err := dbt.db.QueryRow("select @@max_allowed_packet").Scan(&maxAllowedPacketSize)
+		err := ct.conn.QueryRow("select @@max_allowed_packet").Scan(&maxAllowedPacketSize)
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		maxAllowedPacketSize--
 
@@ -839,7 +823,7 @@ func TestLongData(t *testing.T) {
 			maxAllowedPacketSize = 1 << 25
 		}
 
-		dbt.mustExec("CREATE TABLE test (value LONGBLOB)")
+		ct.mustExec("CREATE TABLE test (value LONGBLOB)")
 
 		in := strings.Repeat(`a`, maxAllowedPacketSize+1)
 		var out string
@@ -848,50 +832,50 @@ func TestLongData(t *testing.T) {
 		// Long text data
 		const nonDataQueryLen = 28 // length query w/o value
 		inS := in[:maxAllowedPacketSize-nonDataQueryLen]
-		dbt.mustExec("INSERT INTO test VALUES('" + inS + "')")
-		rows = dbt.mustQuery("SELECT value FROM test")
+		ct.mustExec("INSERT INTO test VALUES('" + inS + "')")
+		rows = ct.mustQuery("SELECT value FROM test")
 		if rows.Next() {
 			rows.Scan(&out)
 			if inS != out {
-				dbt.Fatalf("LONGBLOB: length in: %d, length out: %d", len(inS), len(out))
+				ct.Fatalf("LONGBLOB: length in: %d, length out: %d", len(inS), len(out))
 			}
 			if rows.Next() {
-				dbt.Error("LONGBLOB: unexpexted row")
+				ct.Error("LONGBLOB: unexpexted row")
 			}
 		} else {
-			dbt.Fatalf("LONGBLOB: no data")
+			ct.Fatalf("LONGBLOB: no data")
 		}
 
 		// Empty table
-		dbt.mustExec("TRUNCATE TABLE test")
+		ct.mustExec("TRUNCATE TABLE test")
 
 		// Long binary data
-		dbt.mustExec("INSERT INTO test VALUES(?)", in)
-		rows = dbt.mustQuery("SELECT value FROM test WHERE 1=?", 1)
+		ct.mustExec("INSERT INTO test VALUES(?)", in)
+		rows = ct.mustQuery("SELECT value FROM test WHERE 1=?", 1)
 		if rows.Next() {
 			rows.Scan(&out)
 			if in != out {
-				dbt.Fatalf("LONGBLOB: length in: %d, length out: %d", len(in), len(out))
+				ct.Fatalf("LONGBLOB: length in: %d, length out: %d", len(in), len(out))
 			}
 			if rows.Next() {
-				dbt.Error("LONGBLOB: unexpexted row")
+				ct.Error("LONGBLOB: unexpexted row")
 			}
 		} else {
 			if err = rows.Err(); err != nil {
-				dbt.Fatalf("LONGBLOB: no data (err: %s)", err.Error())
+				ct.Fatalf("LONGBLOB: no data (err: %s)", err.Error())
 			} else {
-				dbt.Fatal("LONGBLOB: no data (err: <nil>)")
+				ct.Fatal("LONGBLOB: no data (err: <nil>)")
 			}
 		}
 	})
 }
 
 func TestLoadData(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		verifyLoadDataResult := func() {
-			rows, err := dbt.db.Query("SELECT * FROM test")
+			rows, err := ct.conn.Query("SELECT * FROM test")
 			if err != nil {
-				dbt.Fatal(err.Error())
+				ct.Fatal(err.Error())
 			}
 
 			i := 0
@@ -909,111 +893,111 @@ func TestLoadData(t *testing.T) {
 				i++
 				err = rows.Scan(&id, &value)
 				if err != nil {
-					dbt.Fatal(err.Error())
+					ct.Fatal(err.Error())
 				}
 				if i != id {
-					dbt.Fatalf("%d != %d", i, id)
+					ct.Fatalf("%d != %d", i, id)
 				}
 				if values[i-1] != value {
-					dbt.Fatalf("%q != %q", values[i-1], value)
+					ct.Fatalf("%q != %q", values[i-1], value)
 				}
 			}
 			err = rows.Err()
 			if err != nil {
-				dbt.Fatal(err.Error())
+				ct.Fatal(err.Error())
 			}
 
 			if i != 4 {
-				dbt.Fatalf("Rows count mismatch. Got %d, want 4", i)
+				ct.Fatalf("Rows count mismatch. Got %d, want 4", i)
 			}
 		}
 		file, err := ioutil.TempFile("", "gotest")
 		defer os.Remove(file.Name())
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		file.WriteString("1\ta string\n2\ta string containing a \\t\n3\ta string containing a \\n\n4\ta string containing both \\t\\n\n")
 		file.Close()
 
-		dbt.db.Exec("DROP TABLE IF EXISTS test")
-		dbt.mustExec("CREATE TABLE test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
+		ct.conn.Exec("DROP TABLE IF EXISTS test")
+		ct.mustExec("CREATE TABLE test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 
 		// Local File
 		RegisterLocalFile(file.Name())
-		dbt.mustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE %q INTO TABLE test", file.Name()))
+		ct.mustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE %q INTO TABLE test", file.Name()))
 		verifyLoadDataResult()
 		// negative test
-		_, err = dbt.db.Exec("LOAD DATA LOCAL INFILE 'doesnotexist' INTO TABLE test")
+		_, err = ct.conn.Exec("LOAD DATA LOCAL INFILE 'doesnotexist' INTO TABLE test")
 		if err == nil {
-			dbt.Fatal("Load non-existent file didn't fail")
+			ct.Fatal("Load non-existent file didn't fail")
 		} else if err.Error() != "Local File 'doesnotexist' is not registered. Use the DSN parameter 'allowAllFiles=true' to allow all files" {
-			dbt.Fatal(err.Error())
+			ct.Fatal(err.Error())
 		}
 
 		// Empty table
-		dbt.mustExec("TRUNCATE TABLE test")
+		ct.mustExec("TRUNCATE TABLE test")
 
 		// Reader
 		RegisterReaderHandler("test", func() io.Reader {
 			file, err = os.Open(file.Name())
 			if err != nil {
-				dbt.Fatal(err)
+				ct.Fatal(err)
 			}
 			return file
 		})
-		dbt.mustExec("LOAD DATA LOCAL INFILE 'Reader::test' INTO TABLE test")
+		ct.mustExec("LOAD DATA LOCAL INFILE 'Reader::test' INTO TABLE test")
 		verifyLoadDataResult()
 		// negative test
-		_, err = dbt.db.Exec("LOAD DATA LOCAL INFILE 'Reader::doesnotexist' INTO TABLE test")
+		_, err = ct.conn.Exec("LOAD DATA LOCAL INFILE 'Reader::doesnotexist' INTO TABLE test")
 		if err == nil {
-			dbt.Fatal("Load non-existent Reader didn't fail")
+			ct.Fatal("Load non-existent Reader didn't fail")
 		} else if err.Error() != "Reader 'doesnotexist' is not registered" {
-			dbt.Fatal(err.Error())
+			ct.Fatal(err.Error())
 		}
 	})
 }
 
 func TestFoundRows(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
-		dbt.mustExec("CREATE TABLE test (id INT NOT NULL ,data INT NOT NULL)")
-		dbt.mustExec("INSERT INTO test (id, data) VALUES (0, 0),(0, 0),(1, 0),(1, 0),(1, 1)")
+	runTests(t, dsn, func(ct *ConnTest) {
+		ct.mustExec("CREATE TABLE test (id INT NOT NULL ,data INT NOT NULL)")
+		ct.mustExec("INSERT INTO test (id, data) VALUES (0, 0),(0, 0),(1, 0),(1, 0),(1, 1)")
 
-		res := dbt.mustExec("UPDATE test SET data = 1 WHERE id = 0")
+		res := ct.mustExec("UPDATE test SET data = 1 WHERE id = 0")
 		count, err := res.RowsAffected()
 		if err != nil {
-			dbt.Fatalf("res.RowsAffected() returned error: %s", err.Error())
+			ct.Fatalf("res.RowsAffected() returned error: %s", err.Error())
 		}
 		if count != 2 {
-			dbt.Fatalf("Expected 2 affected rows, got %d", count)
+			ct.Fatalf("Expected 2 affected rows, got %d", count)
 		}
-		res = dbt.mustExec("UPDATE test SET data = 1 WHERE id = 1")
+		res = ct.mustExec("UPDATE test SET data = 1 WHERE id = 1")
 		count, err = res.RowsAffected()
 		if err != nil {
-			dbt.Fatalf("res.RowsAffected() returned error: %s", err.Error())
+			ct.Fatalf("res.RowsAffected() returned error: %s", err.Error())
 		}
 		if count != 2 {
-			dbt.Fatalf("Expected 2 affected rows, got %d", count)
+			ct.Fatalf("Expected 2 affected rows, got %d", count)
 		}
 	})
-	runTests(t, dsn+"&clientFoundRows=true", func(dbt *DBTest) {
-		dbt.mustExec("CREATE TABLE test (id INT NOT NULL ,data INT NOT NULL)")
-		dbt.mustExec("INSERT INTO test (id, data) VALUES (0, 0),(0, 0),(1, 0),(1, 0),(1, 1)")
+	runTests(t, dsn+"&clientFoundRows=true", func(ct *ConnTest) {
+		ct.mustExec("CREATE TABLE test (id INT NOT NULL ,data INT NOT NULL)")
+		ct.mustExec("INSERT INTO test (id, data) VALUES (0, 0),(0, 0),(1, 0),(1, 0),(1, 1)")
 
-		res := dbt.mustExec("UPDATE test SET data = 1 WHERE id = 0")
+		res := ct.mustExec("UPDATE test SET data = 1 WHERE id = 0")
 		count, err := res.RowsAffected()
 		if err != nil {
-			dbt.Fatalf("res.RowsAffected() returned error: %s", err.Error())
+			ct.Fatalf("res.RowsAffected() returned error: %s", err.Error())
 		}
 		if count != 2 {
-			dbt.Fatalf("Expected 2 matched rows, got %d", count)
+			ct.Fatalf("Expected 2 matched rows, got %d", count)
 		}
-		res = dbt.mustExec("UPDATE test SET data = 1 WHERE id = 1")
+		res = ct.mustExec("UPDATE test SET data = 1 WHERE id = 1")
 		count, err = res.RowsAffected()
 		if err != nil {
-			dbt.Fatalf("res.RowsAffected() returned error: %s", err.Error())
+			ct.Fatalf("res.RowsAffected() returned error: %s", err.Error())
 		}
 		if count != 3 {
-			dbt.Fatalf("Expected 3 matched rows, got %d", count)
+			ct.Fatalf("Expected 3 matched rows, got %d", count)
 		}
 	})
 }
@@ -1032,8 +1016,8 @@ func TestStrict(t *testing.T) {
 		// => skip test, MySQL server version is too old
 		return
 	}
-	runTests(t, relaxedDsn, func(dbt *DBTest) {
-		dbt.mustExec("CREATE TABLE test (a TINYINT NOT NULL, b CHAR(4))")
+	runTests(t, relaxedDsn, func(ct *ConnTest) {
+		ct.mustExec("CREATE TABLE test (a TINYINT NOT NULL, b CHAR(4))")
 
 		var queries = [...]struct {
 			in    string
@@ -1046,7 +1030,7 @@ func TestStrict(t *testing.T) {
 
 		var checkWarnings = func(err error, mode string, idx int) {
 			if err == nil {
-				dbt.Errorf("Expected STRICT error on query [%s] %s", mode, queries[idx].in)
+				ct.Errorf("Expected STRICT error on query [%s] %s", mode, queries[idx].in)
 			}
 
 			if warnings, ok := err.(MySQLWarnings); ok {
@@ -1055,24 +1039,24 @@ func TestStrict(t *testing.T) {
 					codes[i] = warnings[i].Code
 				}
 				if len(codes) != len(queries[idx].codes) {
-					dbt.Errorf("Unexpected STRICT error count on query [%s] %s: Wanted %v, Got %v", mode, queries[idx].in, queries[idx].codes, codes)
+					ct.Errorf("Unexpected STRICT error count on query [%s] %s: Wanted %v, Got %v", mode, queries[idx].in, queries[idx].codes, codes)
 				}
 
 				for i := range warnings {
 					if codes[i] != queries[idx].codes[i] {
-						dbt.Errorf("Unexpected STRICT error codes on query [%s] %s: Wanted %v, Got %v", mode, queries[idx].in, queries[idx].codes, codes)
+						ct.Errorf("Unexpected STRICT error codes on query [%s] %s: Wanted %v, Got %v", mode, queries[idx].in, queries[idx].codes, codes)
 						return
 					}
 				}
 
 			} else {
-				dbt.Errorf("Unexpected error on query [%s] %s: %s", mode, queries[idx].in, err.Error())
+				ct.Errorf("Unexpected error on query [%s] %s: %s", mode, queries[idx].in, err.Error())
 			}
 		}
 
 		// text protocol
 		for i := range queries {
-			_, err = dbt.db.Exec(queries[i].in)
+			_, err = ct.conn.Exec(queries[i].in)
 			checkWarnings(err, "text", i)
 		}
 
@@ -1080,9 +1064,9 @@ func TestStrict(t *testing.T) {
 
 		// binary protocol
 		for i := range queries {
-			stmt, err = dbt.db.Prepare(queries[i].in)
+			stmt, err = ct.conn.Prepare(queries[i].in)
 			if err != nil {
-				dbt.Errorf("Error on preparing query %s: %s", queries[i].in, err.Error())
+				ct.Errorf("Error on preparing query %s: %s", queries[i].in, err.Error())
 			}
 
 			_, err = stmt.Exec()
@@ -1090,32 +1074,32 @@ func TestStrict(t *testing.T) {
 
 			err = stmt.Close()
 			if err != nil {
-				dbt.Errorf("Error on closing stmt for query %s: %s", queries[i].in, err.Error())
+				ct.Errorf("Error on closing stmt for query %s: %s", queries[i].in, err.Error())
 			}
 		}
 	})
 }
 
 func TestTLS(t *testing.T) {
-	tlsTest := func(dbt *DBTest) {
-		if err := dbt.db.Ping(); err != nil {
+	tlsTest := func(ct *ConnTest) {
+		if err := ct.conn.Ping(); err != nil {
 			if err == ErrNoTLS {
-				dbt.Skip("Server does not support TLS")
+				ct.Skip("Server does not support TLS")
 			} else {
-				dbt.Fatalf("Error on Ping: %s", err.Error())
+				ct.Fatalf("Error on Ping: %s", err.Error())
 			}
 		}
 
-		rows := dbt.mustQuery("SHOW STATUS LIKE 'Ssl_cipher'")
+		rows := ct.mustQuery("SHOW STATUS LIKE 'Ssl_cipher'")
 
 		var variable, value *sql.RawBytes
 		for rows.Next() {
 			if err := rows.Scan(&variable, &value); err != nil {
-				dbt.Fatal(err.Error())
+				ct.Fatal(err.Error())
 			}
 
 			if value == nil {
-				dbt.Fatal("No Cipher")
+				ct.Fatal("No Cipher")
 			}
 		}
 	}
@@ -1171,19 +1155,19 @@ func TestCharset(t *testing.T) {
 	}
 
 	mustSetCharset := func(charsetParam, expected string) {
-		runTests(t, dsn+"&"+charsetParam, func(dbt *DBTest) {
-			rows := dbt.mustQuery("SELECT @@character_set_connection")
+		runTests(t, dsn+"&"+charsetParam, func(ct *ConnTest) {
+			rows := ct.mustQuery("SELECT @@character_set_connection")
 			defer rows.Close()
 
 			if !rows.Next() {
-				dbt.Fatalf("Error getting connection charset: %s", rows.Err())
+				ct.Fatalf("Error getting connection charset: %s", rows.Err())
 			}
 
 			var got string
 			rows.Scan(&got)
 
 			if got != expected {
-				dbt.Fatalf("Expected connection charset %s but got %s", expected, got)
+				ct.Fatalf("Expected connection charset %s but got %s", expected, got)
 			}
 		})
 	}
@@ -1200,11 +1184,11 @@ func TestCharset(t *testing.T) {
 }
 
 func TestFailingCharset(t *testing.T) {
-	runTests(t, dsn+"&charset=none", func(dbt *DBTest) {
+	runTests(t, dsn+"&charset=none", func(ct *ConnTest) {
 		// run query to really establish connection...
-		_, err := dbt.db.Exec("SELECT 1")
+		_, err := ct.conn.Exec("SELECT 1")
 		if err == nil {
-			dbt.db.Close()
+			ct.conn.Close()
 			t.Fatalf("Connection must not succeed without a valid charset")
 		}
 	})
@@ -1235,22 +1219,22 @@ func TestCollation(t *testing.T) {
 			expected = defaultCollation
 		}
 
-		runTests(t, tdsn, func(dbt *DBTest) {
+		runTests(t, tdsn, func(ct *ConnTest) {
 			var got string
-			if err := dbt.db.QueryRow("SELECT @@collation_connection").Scan(&got); err != nil {
-				dbt.Fatal(err)
+			if err := ct.conn.QueryRow("SELECT @@collation_connection").Scan(&got); err != nil {
+				ct.Fatal(err)
 			}
 
 			if got != expected {
-				dbt.Fatalf("Expected connection collation %s but got %s", expected, got)
+				ct.Fatalf("Expected connection collation %s but got %s", expected, got)
 			}
 		})
 	}
 }
 
 func TestColumnsWithAlias(t *testing.T) {
-	runTests(t, dsn+"&columnsWithAlias=true", func(dbt *DBTest) {
-		rows := dbt.mustQuery("SELECT 1 AS A")
+	runTests(t, dsn+"&columnsWithAlias=true", func(ct *ConnTest) {
+		rows := ct.mustQuery("SELECT 1 AS A")
 		defer rows.Close()
 		cols, _ := rows.Columns()
 		if len(cols) != 1 {
@@ -1261,7 +1245,7 @@ func TestColumnsWithAlias(t *testing.T) {
 		}
 		rows.Close()
 
-		rows = dbt.mustQuery("SELECT * FROM (SELECT 1 AS one) AS A")
+		rows = ct.mustQuery("SELECT * FROM (SELECT 1 AS one) AS A")
 		cols, _ = rows.Columns()
 		if len(cols) != 1 {
 			t.Fatalf("expected 1 column, got %d", len(cols))
@@ -1273,19 +1257,19 @@ func TestColumnsWithAlias(t *testing.T) {
 }
 
 func TestRawBytesResultExceedsBuffer(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		// defaultBufSize from buffer.go
 		expected := strings.Repeat("abc", defaultBufSize)
 
-		rows := dbt.mustQuery("SELECT '" + expected + "'")
+		rows := ct.mustQuery("SELECT '" + expected + "'")
 		defer rows.Close()
 		if !rows.Next() {
-			dbt.Error("expected result, got none")
+			ct.Error("expected result, got none")
 		}
 		var result sql.RawBytes
 		rows.Scan(&result)
 		if expected != string(result) {
-			dbt.Error("result did not match expected value")
+			ct.Error("result did not match expected value")
 		}
 	})
 }
@@ -1294,33 +1278,33 @@ func TestTimezoneConversion(t *testing.T) {
 	zones := []string{"UTC", "US/Central", "US/Pacific", "Local"}
 
 	// Regression test for timezone handling
-	tzTest := func(dbt *DBTest) {
+	tzTest := func(ct *ConnTest) {
 
 		// Create table
-		dbt.mustExec("CREATE TABLE test (ts TIMESTAMP)")
+		ct.mustExec("CREATE TABLE test (ts TIMESTAMP)")
 
 		// Insert local time into database (should be converted)
 		usCentral, _ := time.LoadLocation("US/Central")
 		reftime := time.Date(2014, 05, 30, 18, 03, 17, 0, time.UTC).In(usCentral)
-		dbt.mustExec("INSERT INTO test VALUE (?)", reftime)
+		ct.mustExec("INSERT INTO test VALUE (?)", reftime)
 
 		// Retrieve time from DB
-		rows := dbt.mustQuery("SELECT ts FROM test")
+		rows := ct.mustQuery("SELECT ts FROM test")
 		if !rows.Next() {
-			dbt.Fatal("Didn't get any rows out")
+			ct.Fatal("Didn't get any rows out")
 		}
 
 		var dbTime time.Time
 		err := rows.Scan(&dbTime)
 		if err != nil {
-			dbt.Fatal("Err", err)
+			ct.Fatal("Err", err)
 		}
 
 		// Check that dates match
 		if reftime.Unix() != dbTime.Unix() {
-			dbt.Errorf("Times don't match.\n")
-			dbt.Errorf(" Now(%v)=%v\n", usCentral, reftime)
-			dbt.Errorf(" Now(UTC)=%v\n", dbTime)
+			ct.Errorf("Times don't match.\n")
+			ct.Errorf(" Now(%v)=%v\n", usCentral, reftime)
+			ct.Errorf(" Now(UTC)=%v\n", dbTime)
 		}
 	}
 
@@ -1332,24 +1316,24 @@ func TestTimezoneConversion(t *testing.T) {
 // Special cases
 
 func TestRowsClose(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
-		rows, err := dbt.db.Query("SELECT 1")
+	runTests(t, dsn, func(ct *ConnTest) {
+		rows, err := ct.conn.Query("SELECT 1")
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 
 		err = rows.Close()
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 
 		if rows.Next() {
-			dbt.Fatal("Unexpected row after rows.Close()")
+			ct.Fatal("Unexpected row after rows.Close()")
 		}
 
 		err = rows.Err()
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 	})
 }
@@ -1357,39 +1341,39 @@ func TestRowsClose(t *testing.T) {
 // dangling statements
 // http://code.google.com/p/go/issues/detail?id=3865
 func TestCloseStmtBeforeRows(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
-		stmt, err := dbt.db.Prepare("SELECT 1")
+	runTests(t, dsn, func(ct *ConnTest) {
+		stmt, err := ct.conn.Prepare("SELECT 1")
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 
 		rows, err := stmt.Query()
 		if err != nil {
 			stmt.Close()
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		defer rows.Close()
 
 		err = stmt.Close()
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 
 		if !rows.Next() {
-			dbt.Fatal("Getting row failed")
+			ct.Fatal("Getting row failed")
 		} else {
 			err = rows.Err()
 			if err != nil {
-				dbt.Fatal(err)
+				ct.Fatal(err)
 			}
 
 			var out bool
 			err = rows.Scan(&out)
 			if err != nil {
-				dbt.Fatalf("Error on rows.Scan(): %s", err.Error())
+				ct.Fatalf("Error on rows.Scan(): %s", err.Error())
 			}
 			if out != true {
-				dbt.Errorf("true != %t", out)
+				ct.Errorf("true != %t", out)
 			}
 		}
 	})
@@ -1398,23 +1382,23 @@ func TestCloseStmtBeforeRows(t *testing.T) {
 // It is valid to have multiple Rows for the same Stmt
 // http://code.google.com/p/go/issues/detail?id=3734
 func TestStmtMultiRows(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
-		stmt, err := dbt.db.Prepare("SELECT 1 UNION SELECT 0")
+	runTests(t, dsn, func(ct *ConnTest) {
+		stmt, err := ct.conn.Prepare("SELECT 1 UNION SELECT 0")
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 
 		rows1, err := stmt.Query()
 		if err != nil {
 			stmt.Close()
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		defer rows1.Close()
 
 		rows2, err := stmt.Query()
 		if err != nil {
 			stmt.Close()
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		defer rows2.Close()
 
@@ -1422,87 +1406,87 @@ func TestStmtMultiRows(t *testing.T) {
 
 		// 1
 		if !rows1.Next() {
-			dbt.Fatal("1st rows1.Next failed")
+			ct.Fatal("1st rows1.Next failed")
 		} else {
 			err = rows1.Err()
 			if err != nil {
-				dbt.Fatal(err)
+				ct.Fatal(err)
 			}
 
 			err = rows1.Scan(&out)
 			if err != nil {
-				dbt.Fatalf("Error on rows.Scan(): %s", err.Error())
+				ct.Fatalf("Error on rows.Scan(): %s", err.Error())
 			}
 			if out != true {
-				dbt.Errorf("true != %t", out)
+				ct.Errorf("true != %t", out)
 			}
 		}
 
 		if !rows2.Next() {
-			dbt.Fatal("1st rows2.Next failed")
+			ct.Fatal("1st rows2.Next failed")
 		} else {
 			err = rows2.Err()
 			if err != nil {
-				dbt.Fatal(err)
+				ct.Fatal(err)
 			}
 
 			err = rows2.Scan(&out)
 			if err != nil {
-				dbt.Fatalf("Error on rows.Scan(): %s", err.Error())
+				ct.Fatalf("Error on rows.Scan(): %s", err.Error())
 			}
 			if out != true {
-				dbt.Errorf("true != %t", out)
+				ct.Errorf("true != %t", out)
 			}
 		}
 
 		// 2
 		if !rows1.Next() {
-			dbt.Fatal("2nd rows1.Next failed")
+			ct.Fatal("2nd rows1.Next failed")
 		} else {
 			err = rows1.Err()
 			if err != nil {
-				dbt.Fatal(err)
+				ct.Fatal(err)
 			}
 
 			err = rows1.Scan(&out)
 			if err != nil {
-				dbt.Fatalf("Error on rows.Scan(): %s", err.Error())
+				ct.Fatalf("Error on rows.Scan(): %s", err.Error())
 			}
 			if out != false {
-				dbt.Errorf("false != %t", out)
+				ct.Errorf("false != %t", out)
 			}
 
 			if rows1.Next() {
-				dbt.Fatal("Unexpected row on rows1")
+				ct.Fatal("Unexpected row on rows1")
 			}
 			err = rows1.Close()
 			if err != nil {
-				dbt.Fatal(err)
+				ct.Fatal(err)
 			}
 		}
 
 		if !rows2.Next() {
-			dbt.Fatal("2nd rows2.Next failed")
+			ct.Fatal("2nd rows2.Next failed")
 		} else {
 			err = rows2.Err()
 			if err != nil {
-				dbt.Fatal(err)
+				ct.Fatal(err)
 			}
 
 			err = rows2.Scan(&out)
 			if err != nil {
-				dbt.Fatalf("Error on rows.Scan(): %s", err.Error())
+				ct.Fatalf("Error on rows.Scan(): %s", err.Error())
 			}
 			if out != false {
-				dbt.Errorf("false != %t", out)
+				ct.Errorf("false != %t", out)
 			}
 
 			if rows2.Next() {
-				dbt.Fatal("Unexpected row on rows2")
+				ct.Fatal("Unexpected row on rows2")
 			}
 			err = rows2.Close()
 			if err != nil {
-				dbt.Fatal(err)
+				ct.Fatal(err)
 			}
 		}
 	})
@@ -1513,11 +1497,11 @@ func TestStmtMultiRows(t *testing.T) {
 // * more parameters than fit into the buffer (issue 201)
 func TestPreparedManyCols(t *testing.T) {
 	const numParams = defaultBufSize
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		query := "SELECT ?" + strings.Repeat(",?", numParams-1)
-		stmt, err := dbt.db.Prepare(query)
+		stmt, err := ct.conn.Prepare(query)
 		if err != nil {
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		defer stmt.Close()
 		// create more parameters than fit into the buffer
@@ -1526,7 +1510,7 @@ func TestPreparedManyCols(t *testing.T) {
 		rows, err := stmt.Query(params...)
 		if err != nil {
 			stmt.Close()
-			dbt.Fatal(err)
+			ct.Fatal(err)
 		}
 		defer rows.Close()
 	})
@@ -1537,13 +1521,13 @@ func TestConcurrent(t *testing.T) {
 		t.Skip("MYSQL_TEST_CONCURRENT env var not set")
 	}
 
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		var max int
-		err := dbt.db.QueryRow("SELECT @@max_connections").Scan(&max)
+		err := ct.conn.QueryRow("SELECT @@max_connections").Scan(&max)
 		if err != nil {
-			dbt.Fatalf("%s", err.Error())
+			ct.Fatalf("%s", err.Error())
 		}
-		dbt.Logf("Testing up to %d concurrent connections \r\n", max)
+		ct.Logf("Testing up to %d concurrent connections \r\n", max)
 
 		var remaining, succeeded int32 = int32(max), 0
 
@@ -1562,7 +1546,7 @@ func TestConcurrent(t *testing.T) {
 			go func(id int) {
 				defer wg.Done()
 
-				tx, err := dbt.db.Begin()
+				tx, err := ct.conn.Begin()
 				atomic.AddInt32(&remaining, -1)
 
 				if err != nil {
@@ -1594,10 +1578,10 @@ func TestConcurrent(t *testing.T) {
 		wg.Wait()
 
 		if fatalError != "" {
-			dbt.Fatal(fatalError)
+			ct.Fatal(fatalError)
 		}
 
-		dbt.Logf("Reached %d concurrent connections\r\n", succeeded)
+		ct.Logf("Reached %d concurrent connections\r\n", succeeded)
 	})
 }
 
@@ -1616,29 +1600,29 @@ func TestCustomDial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error connecting: %s", err.Error())
 	}
-	defer db.Close()
+	defer conn.Close()
 
-	if _, err = db.Exec("DO 1"); err != nil {
+	if _, err = conn.Exec("DO 1"); err != nil {
 		t.Fatalf("Connection failed: %s", err.Error())
 	}
 }
 
 func TestSqlInjection(t *testing.T) {
-	createTest := func(arg string) func(dbt *DBTest) {
-		return func(dbt *DBTest) {
-			dbt.mustExec("CREATE TABLE test (v INTEGER)")
-			dbt.mustExec("INSERT INTO test VALUES (?)", 1)
+	createTest := func(arg string) func(ct *ConnTest) {
+		return func(ct *ConnTest) {
+			ct.mustExec("CREATE TABLE test (v INTEGER)")
+			ct.mustExec("INSERT INTO test VALUES (?)", 1)
 
 			var v int
 			// NULL can't be equal to anything, the idea here is to inject query so it returns row
 			// This test verifies that escapeQuotes and escapeBackslash are working properly
-			err := dbt.db.QueryRow("SELECT v FROM test WHERE NULL = ?", arg).Scan(&v)
+			err := ct.conn.QueryRow("SELECT v FROM test WHERE NULL = ?", arg).Scan(&v)
 			if err == sql.ErrNoRows {
 				return // success, sql injection failed
 			} else if err == nil {
-				dbt.Errorf("Sql injection successful with arg: %s", arg)
+				ct.Errorf("Sql injection successful with arg: %s", arg)
 			} else {
-				dbt.Errorf("Error running query with arg: %s; err: %s", arg, err.Error())
+				ct.Errorf("Error running query with arg: %s; err: %s", arg, err.Error())
 			}
 		}
 	}
@@ -1655,21 +1639,21 @@ func TestSqlInjection(t *testing.T) {
 
 // Test if inserted data is correctly retrieved after being escaped
 func TestInsertRetrieveEscapedData(t *testing.T) {
-	testData := func(dbt *DBTest) {
-		dbt.mustExec("CREATE TABLE test (v VARCHAR(255))")
+	testData := func(ct *ConnTest) {
+		ct.mustExec("CREATE TABLE test (v VARCHAR(255))")
 
 		// All sequences that are escaped by escapeQuotes and escapeBackslash
 		v := "foo \x00\n\r\x1a\"'\\"
-		dbt.mustExec("INSERT INTO test VALUES (?)", v)
+		ct.mustExec("INSERT INTO test VALUES (?)", v)
 
 		var out string
-		err := dbt.db.QueryRow("SELECT v FROM test").Scan(&out)
+		err := ct.conn.QueryRow("SELECT v FROM test").Scan(&out)
 		if err != nil {
-			dbt.Fatalf("%s", err.Error())
+			ct.Fatalf("%s", err.Error())
 		}
 
 		if out != v {
-			dbt.Errorf("%q != %q", out, v)
+			ct.Errorf("%q != %q", out, v)
 		}
 	}
 
@@ -1683,7 +1667,7 @@ func TestInsertRetrieveEscapedData(t *testing.T) {
 }
 
 func TestUnixSocketAuthFail(t *testing.T) {
-	runTests(t, dsn, func(dbt *DBTest) {
+	runTests(t, dsn, func(ct *ConnTest) {
 		// Save the current logger so we can restore it.
 		oldLogger := errLog
 
@@ -1703,7 +1687,7 @@ func TestUnixSocketAuthFail(t *testing.T) {
 			socket = addr
 		} else {
 			// Get socket file from MySQL.
-			err := dbt.db.QueryRow("SELECT @@socket").Scan(&socket)
+			err := ct.conn.QueryRow("SELECT @@socket").Scan(&socket)
 			if err != nil {
 				t.Fatalf("Error on SELECT @@socket: %s", err.Error())
 			}
@@ -1714,10 +1698,10 @@ func TestUnixSocketAuthFail(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Error connecting: %s", err.Error())
 		}
-		defer db.Close()
+		defer conn.Close()
 
 		// Connect to MySQL for real. This will cause an auth failure.
-		err = db.Ping()
+		err = conn.Ping()
 		if err == nil {
 			t.Error("expected Ping() to return an error")
 		}
@@ -1727,4 +1711,4 @@ func TestUnixSocketAuthFail(t *testing.T) {
 			t.Errorf("expected no output, got %q", actual)
 		}
 	})
-}
+}*/

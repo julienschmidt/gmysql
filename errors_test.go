@@ -6,7 +6,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package mysql
+package gmysql
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func TestErrorsSetLogger(t *testing.T) {
 }
 
 func TestErrorsStrictIgnoreNotes(t *testing.T) {
-	runTests(t, dsn+"&sql_notes=false", func(dbt *DBTest) {
-		dbt.mustExec("DROP TABLE IF EXISTS does_not_exist")
+	runTests(t, dsn+"&sql_notes=false", func(ct *ConnTest) {
+		ct.mustExec("DROP TABLE IF EXISTS does_not_exist")
 	})
 }

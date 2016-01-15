@@ -6,7 +6,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package mysql
+package gmysql
 
 import (
 	"crypto/tls"
@@ -43,7 +43,6 @@ type Config struct {
 	AllowOldPasswords       bool // Allows the old insecure password method
 	ClientFoundRows         bool // Return number of matching rows instead of rows changed
 	ColumnsWithAlias        bool // Prepend table alias to column names
-	InterpolateParams       bool // Interpolate placeholders into query string
 	ParseTime               bool // Parse time values to time.Time
 	Strict                  bool // Return warnings as errors
 }
@@ -122,7 +121,7 @@ func ParseDSN(dsn string) (cfg *Config, err error) {
 		return nil, errInvalidDSNNoSlash
 	}
 
-	if cfg.InterpolateParams && unsafeCollations[cfg.Collation] {
+	if unsafeCollations[cfg.Collation] {
 		return nil, errInvalidDSNUnsafeCollation
 	}
 
@@ -214,14 +213,6 @@ func parseDSNParams(cfg *Config, params string) (err error) {
 		// Compression
 		case "compress":
 			return errors.New("Compression not implemented yet")
-
-		// Enable client side placeholder substitution
-		case "interpolateParams":
-			var isBool bool
-			cfg.InterpolateParams, isBool = readBool(value)
-			if !isBool {
-				return fmt.Errorf("Invalid Bool value: %s", value)
-			}
 
 		// Time Location
 		case "loc":

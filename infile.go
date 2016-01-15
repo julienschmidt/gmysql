@@ -6,7 +6,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
 // You can obtain one at http://mozilla.org/MPL/2.0/.
 
-package mysql
+package gmysql
 
 import (
 	"fmt"
@@ -93,7 +93,7 @@ func deferredClose(err *error, closer io.Closer) {
 	}
 }
 
-func (mc *mysqlConn) handleInFileRequest(name string) (err error) {
+func (conn *Conn) handleInFileRequest(name string) (err error) {
 	var rdr io.Reader
 	var data []byte
 
@@ -108,7 +108,7 @@ func (mc *mysqlConn) handleInFileRequest(name string) (err error) {
 		if inMap {
 			rdr = handler()
 			if rdr != nil {
-				data = make([]byte, 4+mc.maxWriteSize)
+				data = make([]byte, 4+conn.maxWriteSize)
 
 				if cl, ok := rdr.(io.Closer); ok {
 					defer deferredClose(&err, cl)
@@ -124,7 +124,7 @@ func (mc *mysqlConn) handleInFileRequest(name string) (err error) {
 		fileRegisterLock.RLock()
 		fr := fileRegister[name]
 		fileRegisterLock.RUnlock()
-		if mc.cfg.AllowAllFiles || fr {
+		if conn.cfg.AllowAllFiles || fr {
 			var file *os.File
 			var fi os.FileInfo
 
@@ -134,12 +134,12 @@ func (mc *mysqlConn) handleInFileRequest(name string) (err error) {
 				// get file size
 				if fi, err = file.Stat(); err == nil {
 					rdr = file
-					if fileSize := int(fi.Size()); fileSize <= mc.maxWriteSize {
+					if fileSize := int(fi.Size()); fileSize <= conn.maxWriteSize {
 						data = make([]byte, 4+fileSize)
-					} else if fileSize <= mc.maxPacketAllowed {
-						data = make([]byte, 4+mc.maxWriteSize)
+					} else if fileSize <= conn.maxPacketAllowed {
+						data = make([]byte, 4+conn.maxWriteSize)
 					} else {
-						err = fmt.Errorf("Local File '%s' too large: Size: %d, Max: %d", name, fileSize, mc.maxPacketAllowed)
+						err = fmt.Errorf("Local File '%s' too large: Size: %d, Max: %d", name, fileSize, conn.maxPacketAllowed)
 					}
 				}
 			}
@@ -154,7 +154,7 @@ func (mc *mysqlConn) handleInFileRequest(name string) (err error) {
 		for err == nil {
 			n, err = rdr.Read(data[4:])
 			if n > 0 {
-				if ioErr := mc.writePacket(data[:4+n]); ioErr != nil {
+				if ioErr := conn.writePacket(data[:4+n]); ioErr != nil {
 					return ioErr
 				}
 			}
@@ -168,15 +168,15 @@ func (mc *mysqlConn) handleInFileRequest(name string) (err error) {
 	if data == nil {
 		data = make([]byte, 4)
 	}
-	if ioErr := mc.writePacket(data[:4]); ioErr != nil {
+	if ioErr := conn.writePacket(data[:4]); ioErr != nil {
 		return ioErr
 	}
 
 	// read OK packet
 	if err == nil {
-		return mc.readResultOK()
+		return conn.readResultOK()
 	} else {
-		mc.readPacket()
+		conn.readPacket()
 	}
 	return err
 }
