@@ -33,7 +33,7 @@ var (
 	ErrNoRows            = errors.New("no row available")
 )
 
-var errLog = log.New(os.Stderr, "[MySQL] ", log.Ldate|log.Ltime|log.Lshortfile)
+var errLog = Logger(log.New(os.Stderr, "[MySQL] ", log.Ldate|log.Ltime|log.Lshortfile))
 
 // Logger is used to log critical error messages.
 type Logger interface {
