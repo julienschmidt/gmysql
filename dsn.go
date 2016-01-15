@@ -19,10 +19,10 @@ import (
 )
 
 var (
-	errInvalidDSNUnescaped       = errors.New("Invalid DSN: Did you forget to escape a param value?")
-	errInvalidDSNAddr            = errors.New("Invalid DSN: Network Address not terminated (missing closing brace)")
-	errInvalidDSNNoSlash         = errors.New("Invalid DSN: Missing the slash separating the database name")
-	errInvalidDSNUnsafeCollation = errors.New("Invalid DSN: interpolateParams can be used with ascii, latin1, utf8 and utf8mb4 charset")
+	errInvalidDSNUnescaped       = errors.New("invalid DSN: Did you forget to escape a param value?")
+	errInvalidDSNAddr            = errors.New("invalid DSN: Network Address not terminated (missing closing brace)")
+	errInvalidDSNNoSlash         = errors.New("invalid DSN: Missing the slash separating the database name")
+	errInvalidDSNUnsafeCollation = errors.New("invalid DSN: interpolateParams can be used with ascii, latin1, utf8 and utf8mb4 charset")
 )
 
 // Config is a configuration parsed from a DSN string
@@ -121,7 +121,7 @@ func ParseDSN(dsn string) (cfg *Config, err error) {
 		return nil, errInvalidDSNNoSlash
 	}
 
-	if unsafeCollations[cfg.Collation] {
+	if unsafeCollations[cfg.Collation] { // TODO
 		return nil, errInvalidDSNUnsafeCollation
 	}
 
