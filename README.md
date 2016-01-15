@@ -268,10 +268,10 @@ Files must be whitelisted by registering them with `mysql.RegisterLocalFile(file
 
 To use a `io.Reader` a handler function must be registered with `mysql.RegisterReaderHandler(name, handler)` which returns a `io.Reader` or `io.ReadCloser`. The Reader is available with the filepath `Reader::<name>` then. Choose different names for different handlers and `DeregisterReaderHandler` when you don't need it anymore.
 
-See the [godoc of Go-MySQL-Driver](http://godoc.org/github.com/julienschmidt/gmysql "golang mysql driver documentation") for details.
+See the [godoc of gmysql](http://godoc.org/github.com/julienschmidt/gmysql "golang mysql driver documentation") for details.
 
 ### Unicode support
-Since version 1.1 Go-MySQL-Driver automatically uses the collation `utf8_general_ci` by default.
+The collation `utf8_general_ci` is used by default.
 
 Other collations / charsets can be set using the [`collation`](#collation) DSN parameter.
 
