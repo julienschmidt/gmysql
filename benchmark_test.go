@@ -1,6 +1,6 @@
-// Go MySQL Driver - A MySQL-Driver for Go's database/sql package
+// gmysql - A MySQL package for Go
 //
-// Copyright 2013 The Go-MySQL-Driver Authors. All rights reserved.
+// Copyright 2016 The gmysql Authors. All rights reserved.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this file,
