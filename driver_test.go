@@ -12,7 +12,7 @@ import (
 	//"bytes"
 	//"crypto/tls"
 	"fmt"
-	"io"
+	//"io"
 	//"io/ioutil"
 	//"log"
 	"net"
@@ -122,7 +122,7 @@ func TestEmptyQuery(t *testing.T) {
 		// just a comment, no query
 		rows := ct.mustQuery("--")
 		// will hang before #255
-		if rows.Next() != io.EOF { // TODO
+		if rows.Next() {
 			ct.Errorf("Next on rows must be false")
 		}
 	})
@@ -136,7 +136,7 @@ func TestCRUD(t *testing.T) {
 		// Test for unexpected data
 		//var out bool
 		rows := ct.mustQuery("SELECT * FROM test")
-		if rows.Next() != io.EOF { // TODO
+		if rows.Next() {
 			ct.Error("unexpected data in empty table")
 		}
 

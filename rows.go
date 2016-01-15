@@ -9,6 +9,7 @@
 package gmysql
 
 import (
+	"fmt"
 	"io"
 )
 
@@ -21,18 +22,22 @@ type Field struct {
 }
 
 type Rows interface {
-	Columns() []string
 	Close() error
-	Next(dest ...interface{}) error
+	Columns() []string
+	Next() bool
+	Scan(dest ...interface{}) error
 }
 
 type iRows struct {
 	conn    *Conn
 	columns []Field
+	data    []byte
+	err     error
 }
 
 type binaryRows struct {
 	iRows
+	nullMask []byte
 }
 
 type textRows struct {
@@ -74,28 +79,62 @@ func (rows *iRows) Close() error {
 	return err
 }
 
-func (rows *binaryRows) Next(dest ...interface{}) error {
+func (rows *binaryRows) Next() bool {
 	if conn := rows.conn; conn != nil {
 		if conn.netConn == nil {
-			return ErrInvalidConn
+			rows.err = ErrInvalidConn
+			return false
 		}
-
 		// Fetch next row from stream
-		return rows.readRow(dest)
+		rows.err = rows.readRow()
+		return rows.err != io.EOF
 	}
-	return io.EOF
+	return false
 }
 
-func (rows *textRows) Next(dest ...interface{}) error {
+func (rows *binaryRows) Scan(dest ...interface{}) (err error) {
+	if err = rows.err; err != nil {
+		return
+	}
+	if rows.data == nil {
+		return ErrNoRow
+	}
+	if len(dest) != len(rows.columns) {
+		fmt.Errorf("expected %d destination arguments in Scan, not %d", len(rows.columns), len(dest))
+	}
+
+	err = rows.convert(dest)
+	rows.data = nil
+	return
+}
+
+func (rows *textRows) Next() bool {
 	if conn := rows.conn; conn != nil {
 		if conn.netConn == nil {
-			return ErrInvalidConn
+			rows.err = ErrInvalidConn
+			return false
 		}
-
 		// Fetch next row from stream
-		return rows.readRow(dest)
+		rows.err = rows.readRow()
+		return rows.err != io.EOF
 	}
-	return io.EOF
+	return false
+}
+
+func (rows *textRows) Scan(dest ...interface{}) (err error) {
+	if err = rows.err; err != nil {
+		return
+	}
+	if rows.data == nil {
+		return ErrNoRow
+	}
+	if len(dest) != len(rows.columns) {
+		fmt.Errorf("expected %d destination arguments in Scan, not %d", len(rows.columns), len(dest))
+	}
+
+	err = rows.convert(dest)
+	rows.data = nil
+	return
 }
 
 func (rows emptyRows) Columns() []string {
@@ -106,6 +145,10 @@ func (rows emptyRows) Close() error {
 	return nil
 }
 
-func (rows emptyRows) Next(dest ...interface{}) error {
-	return io.EOF
+func (rows emptyRows) Next() bool {
+	return false
+}
+
+func (rows emptyRows) Scan(dest ...interface{}) error {
+	return ErrNoRow
 }

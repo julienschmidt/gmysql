@@ -26,7 +26,6 @@ type Conn struct {
 	flags            clientFlag
 	status           statusFlag
 	sequence         uint8
-	parseTime        bool
 	strict           bool
 }
 
@@ -59,7 +58,6 @@ func Open(dsn string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn.parseTime = conn.cfg.ParseTime
 	conn.strict = conn.cfg.Strict
 
 	// Connect to Server
@@ -424,16 +422,18 @@ func (conn *Conn) getSystemVar(name string) ([]byte, error) {
 		tr.conn = conn
 		tr.columns = []Field{{fieldType: fieldTypeVarChar}}
 
-		if resLen > 0 {
+		if resLen > 0 { // TODO: resLen must be 1
 			// Columns
 			if err := conn.readUntilEOF(); err != nil {
 				return nil, err
 			}
 		}
 
-		dest := make([]interface{}, resLen)
-		if err = tr.readRow(dest); err == nil {
-			return dest[0].([]byte), conn.readUntilEOF()
+		dest := []interface{}{[]byte{}}
+		if err = tr.readRow(); err == nil {
+			if err = tr.convert(dest); err == nil {
+				return dest[0].([]byte), conn.readUntilEOF()
+			}
 		}
 	}
 	return nil, err

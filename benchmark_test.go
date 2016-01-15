@@ -10,7 +10,6 @@ package gmysql
 
 import (
 	"bytes"
-	"io"
 	"math"
 	"strings"
 	"testing"
@@ -55,8 +54,6 @@ func initConn(b *testing.B, queries ...string) *Conn {
 	return conn
 }
 
-const concurrencyLevel = 10
-
 func BenchmarkQuery(b *testing.B) {
 	tb := (*TB)(b)
 
@@ -78,9 +75,12 @@ func BenchmarkQuery(b *testing.B) {
 		var got string
 		// TODO
 		//tb.check(stmt.QueryRow(1).Scan(&got))
-		rows, err := stmt.Query(1)
-		tb.check(err)
-		if rows.Next(&got) != io.EOF {
+		rows := tb.checkRows(stmt.Query(1))
+		if !rows.Next() {
+			b.Fatal("received no row")
+		}
+		tb.check(rows.Scan(&got))
+		if rows.Next() {
 			b.Fatal("received more than one row")
 		}
 		if got != "one" {
@@ -139,17 +139,17 @@ func BenchmarkRoundtripTxt(b *testing.B) {
 		test := sampleString[0:length]
 		rows := tb.checkRows(conn.Query(`SELECT "` + test + `"`))
 
-		// TODO
-		err := rows.Next(&result)
-		if err != nil {
-			rows.Close()
-			b.Fatalf("crashed")
+		if !rows.Next() {
+			b.Fatal("received no row")
+		}
+		tb.check(rows.Scan(&result))
+		if rows.Next() {
+			b.Fatal("received more than one row")
 		}
 		if result != test {
 			rows.Close()
-			b.Errorf("mismatch")
+			b.Error("mismatch")
 		}
-		rows.Close()
 	}
 }
 
@@ -174,17 +174,18 @@ func BenchmarkRoundtripBin(b *testing.B) {
 		}
 		test := sample[0:length]
 		rows := tb.checkRows(stmt.Query(test))
-		// TODO
-		err := rows.Next(&result)
-		if err != nil {
-			rows.Close()
-			b.Fatalf("crashed")
+
+		if !rows.Next() {
+			b.Fatal("received no row")
+		}
+		tb.check(rows.Scan(&result))
+		if rows.Next() {
+			b.Fatal("received more than one row")
 		}
 		if !bytes.Equal(result, test) {
 			rows.Close()
-			b.Errorf("mismatch")
+			b.Error("mismatch")
 		}
-		rows.Close()
 	}
 }
 

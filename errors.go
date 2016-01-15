@@ -11,7 +11,6 @@ package gmysql
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 )
@@ -31,6 +30,7 @@ var (
 	ErrBusyBuffer        = errors.New("busy buffer")
 	ErrUnsafeInterpolate = errors.New("this type can not safely be interpolated. Use prepared statements instead or build the query manually")
 	ErrInterpolateFailed = errors.New("interpolating query failed")
+	ErrNoRow             = errors.New("no row available")
 )
 
 var errLog Logger = log.New(os.Stderr, "[MySQL] ", log.Ldate|log.Ltime|log.Lshortfile)
@@ -97,36 +97,31 @@ func (conn *Conn) getWarnings() (err error) {
 	var warnings = Warnings{}
 	var values = make([]interface{}, 3)
 
-	for {
-		err = rows.Next(values)
-		switch err {
-		case nil:
-			warning := Warning{}
-
-			if raw, ok := values[0].([]byte); ok {
-				warning.Level = string(raw)
-			} else {
-				warning.Level = fmt.Sprintf("%s", values[0])
-			}
-			if raw, ok := values[1].([]byte); ok {
-				warning.Code = string(raw)
-			} else {
-				warning.Code = fmt.Sprintf("%s", values[1])
-			}
-			if raw, ok := values[2].([]byte); ok {
-				warning.Message = string(raw)
-			} else {
-				warning.Message = fmt.Sprintf("%s", values[0])
-			}
-
-			warnings = append(warnings, warning)
-
-		case io.EOF:
-			return warnings
-
-		default:
+	for rows.Next() {
+		if err = rows.Scan(values); err != nil {
 			rows.Close()
 			return
 		}
+
+		warning := Warning{}
+
+		if raw, ok := values[0].([]byte); ok {
+			warning.Level = string(raw)
+		} else {
+			warning.Level = fmt.Sprintf("%s", values[0])
+		}
+		if raw, ok := values[1].([]byte); ok {
+			warning.Code = string(raw)
+		} else {
+			warning.Code = fmt.Sprintf("%s", values[1])
+		}
+		if raw, ok := values[2].([]byte); ok {
+			warning.Message = string(raw)
+		} else {
+			warning.Message = fmt.Sprintf("%s", values[0])
+		}
+
+		warnings = append(warnings, warning)
 	}
+	return warnings
 }

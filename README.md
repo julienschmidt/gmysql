@@ -288,7 +288,6 @@ See the [Contribution Guidelines](https://github.com/julienschmidt/gmysql/blob/m
 
 ### TODO
 - conn.QueryRow / stmt.QueryRow
-- rows.Scan
 - proper type conversion
 - RawBytes
 
