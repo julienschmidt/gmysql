@@ -23,6 +23,7 @@ type Conn struct {
 	cfg              *Config
 	maxPacketAllowed int
 	maxWriteSize     int
+	writeTimeout     time.Duration
 	flags            clientFlag
 	status           statusFlag
 	sequence         uint8
@@ -82,6 +83,10 @@ func Open(dsn string) (*Conn, error) {
 	}
 
 	conn.buf = newBuffer(conn.netConn)
+
+	// Set I/O timeouts
+	conn.buf.timeout = conn.cfg.ReadTimeout
+	conn.writeTimeout = conn.cfg.WriteTimeout
 
 	// Reading Handshake Initialization Packet
 	cipher, err := conn.readInitPacket()
@@ -211,7 +216,7 @@ func (conn *Conn) cleanup() {
 		conn.netConn = nil
 	}
 	conn.cfg = nil
-	conn.buf.rd = nil
+	conn.buf.nc = nil
 }
 
 func (conn *Conn) interpolateParams(query string, args []interface{}) (string, error) {

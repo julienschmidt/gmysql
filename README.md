@@ -171,6 +171,16 @@ Default:        false
 `parseTime=true` changes the output type of `DATE` and `DATETIME` values to `time.Time` instead of `[]byte` / `string`
 
 
+##### `readTimeout`
+
+```
+Type:           decimal number
+Default:        0
+```
+
+I/O read timeout. The value must be a string of decimal numbers, each with optional fraction and a unit suffix ( *"ms"*, *"s"*, *"m"*, *"h"* ), such as *"30s"*, *"0.5m"* or *"1m30s"*.
+
+
 ##### `strict`
 
 ```
@@ -203,6 +213,16 @@ Default:        false
 ```
 
 `tls=true` enables TLS / SSL encrypted connection to the server. Use `skip-verify` if you want to use a self-signed or invalid certificate (server side). Use a custom value registered with [`mysql.RegisterTLSConfig`](http://godoc.org/github.com/julienschmidt/gmysql#RegisterTLSConfig).
+
+
+##### `writeTimeout`
+
+```
+Type:           decimal number
+Default:        0
+```
+
+I/O write timeout. The value must be a string of decimal numbers, each with optional fraction and a unit suffix ( *"ms"*, *"s"*, *"m"*, *"h"* ), such as *"30s"*, *"0.5m"* or *"1m30s"*.
 
 
 ##### System Variables

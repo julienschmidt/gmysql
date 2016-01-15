@@ -95,6 +95,12 @@ func (conn *Conn) writePacket(data []byte) error {
 		data[3] = conn.sequence
 
 		// Write packet
+		if conn.writeTimeout > 0 {
+			if err := conn.netConn.SetWriteDeadline(time.Now().Add(conn.writeTimeout)); err != nil {
+				return err
+			}
+		}
+
 		n, err := conn.netConn.Write(data[:4+size])
 		if err == nil && n == 4+size {
 			conn.sequence++
@@ -269,7 +275,7 @@ func (conn *Conn) writeAuthPacket(cipher []byte) error {
 			return err
 		}
 		conn.netConn = tlsConn
-		conn.buf.rd = tlsConn
+		conn.buf.nc = tlsConn
 	}
 
 	// Filler [23 bytes] (all 0x00)
