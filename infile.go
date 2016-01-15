@@ -175,8 +175,8 @@ func (conn *Conn) handleInFileRequest(name string) (err error) {
 	// read OK packet
 	if err == nil {
 		return conn.readResultOK()
-	} else {
-		conn.readPacket()
 	}
+
+	conn.readPacket()
 	return err
 }
