@@ -13,6 +13,7 @@ import (
 	"io"
 )
 
+// Field contains meta-data for one field
 type Field struct {
 	tableName string
 	name      string
@@ -21,10 +22,50 @@ type Field struct {
 	decimals  byte
 }
 
+// Rows is the result of a query. Its cursor starts before the first row
+// of the result set. Use Next to advance through the rows:
+//
+//     rows, err := conn.Query("SELECT ...")
+//     ...
+//     defer rows.Close()
+//     for rows.Next() {
+//         var id int
+//         var name string
+//         err = rows.Scan(&id, &name)
+//         ...
+//     }
+//     err = rows.Err() // get any error encountered during iteration
+//     ...
 type Rows interface {
+	// Close closes the Rows, preventing further enumeration. If Next returns
+	// false, the Rows are closed automatically and it will suffice to check the
+	// result of Err. Close is idempotent and does not affect the result of Err.
 	Close() error
+
+	// Columns returns the column names.
 	Columns() []string
+
+	// Next prepares the next result row for reading with the Scan method.  It
+	// returns true on success, or false if there is no next result row or an
+	// error happened while preparing it. Err should be consulted to distinguish
+	// between the two cases.
+	//
+	// Every call to Scan, even the first one, must be preceded by a call to
+	// Next.
 	Next() bool
+
+	// Scan copies the columns in the current row into the values pointed
+	// at by dest.
+	//
+	// If an argument has type *[]byte, Scan saves in that argument a copy
+	// of the corresponding data. The copy is owned by the caller and can
+	// be modified and held indefinitely. The copy can be avoided by using
+	// an argument of type *RawBytes instead; see the documentation for
+	// RawBytes for restrictions on its use.
+	//
+	// If an argument has type *interface{}, Scan copies the value
+	// provided without conversion. If the value is of type []byte, a copy is
+	// made and the caller owns the result.
 	Scan(dest ...interface{}) error
 }
 

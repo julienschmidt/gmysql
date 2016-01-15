@@ -186,6 +186,7 @@ func (conn *Conn) handleParams() (err error) {
 	return
 }
 
+// Close closes the database connection.
 func (conn *Conn) Close() (err error) {
 	// Makes Close idempotent
 	if conn.netConn != nil {
@@ -197,10 +198,10 @@ func (conn *Conn) Close() (err error) {
 	return
 }
 
-// Closes the network connection and unsets internal variables. Do not call this
-// function after successfully authentication, call Close instead. This function
-// is called before auth or on auth failure because MySQL will have already
-// closed the network connection.
+// cleanup closes the network connection and unsets internal variables.
+// Do not call this function after successfully authentication, call Close
+// instead. This function is called before auth or on auth failure because MySQL
+// will have already closed the network connection.
 func (conn *Conn) cleanup() {
 	// Makes cleanup idempotent
 	if conn.netConn != nil {
@@ -330,6 +331,8 @@ func (conn *Conn) interpolateParams(query string, args []interface{}) (string, e
 	return string(buf), nil
 }
 
+// Exec executes a query without returning any rows.
+// The args are for any placeholder parameters in the query.
 func (conn *Conn) Exec(query string, args ...interface{}) (res Result, err error) {
 	if conn.netConn == nil {
 		err = ErrInvalidConn
@@ -374,6 +377,8 @@ func (conn *Conn) exec(query string) error {
 	return err
 }
 
+// Query executes a query that returns rows, typically a SELECT.
+// The args are for any placeholder parameters in the query.
 func (conn *Conn) Query(query string, args ...interface{}) (rows Rows, err error) {
 	if conn.netConn == nil {
 		return nil, ErrInvalidConn

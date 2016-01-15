@@ -30,7 +30,7 @@ var (
 	ErrBusyBuffer        = errors.New("busy buffer")
 	ErrUnsafeInterpolate = errors.New("this type can not safely be interpolated. Use prepared statements instead or build the query manually")
 	ErrInterpolateFailed = errors.New("interpolating query failed")
-	ErrNoRow             = errors.New("no row available")
+	ErrNoRows            = errors.New("no row available")
 )
 
 var errLog = log.New(os.Stderr, "[MySQL] ", log.Ldate|log.Ltime|log.Lshortfile)

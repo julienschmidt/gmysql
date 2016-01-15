@@ -8,6 +8,7 @@
 
 package gmysql
 
+// Stmt is a prepared statement.
 type Stmt struct {
 	conn       *Conn
 	id         uint32
@@ -15,6 +16,9 @@ type Stmt struct {
 	columns    []Field // cached from the first query
 }
 
+// Prepare creates a prepared statement for later queries or executions.
+// The caller must call the statement's Close method
+// when the statement is no longer needed.
 func (conn *Conn) Prepare(query string) (*Stmt, error) {
 	if conn.netConn == nil {
 		return nil, ErrInvalidConn
@@ -46,6 +50,7 @@ func (conn *Conn) Prepare(query string) (*Stmt, error) {
 	return stmt, err
 }
 
+// Close closes the statement.
 func (stmt *Stmt) Close() error {
 	if stmt.conn == nil || stmt.conn.netConn == nil {
 		return ErrInvalidConn
@@ -60,6 +65,8 @@ func (stmt *Stmt) NumInput() int {
 	return stmt.paramCount
 }
 
+// Exec executes a prepared statement with the given arguments and returns a
+// Result summarizing the effect of the statement.
 func (stmt *Stmt) Exec(args ...interface{}) (*Result, error) {
 	if stmt.conn.netConn == nil {
 		return nil, ErrInvalidConn
@@ -98,6 +105,8 @@ func (stmt *Stmt) Exec(args ...interface{}) (*Result, error) {
 	return nil, err
 }
 
+// Query executes a prepared query statement with the given arguments and
+// returns the query results as a *Rows
 func (stmt *Stmt) Query(args ...interface{}) (Rows, error) {
 	if stmt.conn.netConn == nil {
 		return nil, ErrInvalidConn
