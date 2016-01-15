@@ -294,7 +294,7 @@ See the [Contribution Guidelines](https://github.com/julienschmidt/gmysql/blob/m
 ---------------------------------------
 
 ## License
-Go-MySQL-Driver is licensed under the [Mozilla Public License Version 2.0](https://raw.github.com/julienschmidt/gmysql/master/LICENSE)
+gmysql is licensed under the [Mozilla Public License Version 2.0](https://raw.github.com/julienschmidt/gmysql/master/LICENSE)
 
 Mozilla summarizes the license scope as follows:
 > MPL: The copyleft applies to any files containing MPLed code.
