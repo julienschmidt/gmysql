@@ -43,7 +43,6 @@ type Config struct {
 	AllowOldPasswords       bool // Allows the old insecure password method
 	ClientFoundRows         bool // Return number of matching rows instead of rows changed
 	ColumnsWithAlias        bool // Prepend table alias to column names
-	ParseTime               bool // Parse time values to time.Time
 	Strict                  bool // Return warnings as errors
 }
 
@@ -222,14 +221,6 @@ func parseDSNParams(cfg *Config, params string) (err error) {
 			cfg.Loc, err = time.LoadLocation(value)
 			if err != nil {
 				return
-			}
-
-		// time.Time parsing
-		case "parseTime":
-			var isBool bool
-			cfg.ParseTime, isBool = readBool(value)
-			if !isBool {
-				return errors.New("Invalid Bool value: " + value)
 			}
 
 		// Strict mode
