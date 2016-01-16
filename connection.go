@@ -15,6 +15,7 @@ import (
 	"time"
 )
 
+// Conn represents a database connection.
 type Conn struct {
 	buf              buffer
 	netConn          net.Conn

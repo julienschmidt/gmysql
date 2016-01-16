@@ -61,6 +61,7 @@ func (stmt *Stmt) Close() error {
 	return err
 }
 
+// NumInput returns the number of placeholder parameters.
 func (stmt *Stmt) NumInput() int {
 	return stmt.paramCount
 }
