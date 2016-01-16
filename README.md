@@ -1,4 +1,5 @@
-# gmysql [![Build Status](https://travis-ci.org/julienschmidt/gmysql.png?branch=master)](https://travis-ci.org/julienschmidt/gmysql) [![GoDoc](https://godoc.org/github.com/julienschmidt/gmysql?status.svg)](https://godoc.org/github.com/julienschmidt/gmysql)
+# gmysql
+[![Build Status](https://travis-ci.org/julienschmidt/gmysql.png?branch=master)](https://travis-ci.org/julienschmidt/gmysql) [![License](https://img.shields.io/badge/license-MPL_2.0_-yellow.svg?style=flat)](https://raw.githubusercontent.com/julienschmidt/gmysql/master/LICENSE) [![GoDoc](https://godoc.org/github.com/julienschmidt/gmysql?status.svg)](https://godoc.org/github.com/julienschmidt/gmysql)
 
 A *really* GC-friendly MySQL package for Go
 
